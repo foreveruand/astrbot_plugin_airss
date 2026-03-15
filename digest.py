@@ -10,11 +10,14 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from astrbot.core.provider.entities import ProviderType
+
 from .database import Database
 from .models import RSSArticle
 
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
+    from astrbot.core.config.astrbot_config import AstrBotConfig
 
 logger = logging.getLogger("astrbot")
 
@@ -27,28 +30,12 @@ class DigestService:
         "Summarize the following RSS articles in a clear, organized format."
     )
 
-    def __init__(self, context: "Context", db: Database):
+    def __init__(self, context: "Context", db: Database, config: "AstrBotConfig"):
         self.context = context
         self.db = db
-        self._config_cache: dict | None = None
+        self.config = config
 
-    def _get_config(self) -> dict:
-        """Get plugin config with caching."""
-        if self._config_cache is not None:
-            return self._config_cache
-        try:
-            config = self.context.get_config()
-            self._config_cache = config if isinstance(config, dict) else {}
-        except Exception:
-            self._config_cache = {}
-        return self._config_cache
-
-    def _get_config_value(self, key: str, default: Any) -> Any:
-        """Get a config value with fallback to default."""
-        config = self._get_config()
-        return config.get(key, default)
-
-    def _get_persona_system_prompt(self, group_id: int) -> str:
+    async def _get_persona_system_prompt(self, group_id: int) -> str:
         """
         Get the system prompt from the Persona associated with this RSS group.
 
@@ -61,7 +48,7 @@ class DigestService:
         persona_id = f"rss_group_{group_id}"
 
         try:
-            persona = self.context.persona_manager.get_persona(persona_id)
+            persona = await self.context.persona_manager.get_persona(persona_id)
             if persona and persona.system_prompt:
                 logger.debug(f"Using Persona {persona_id} for digest")
                 return persona.system_prompt
@@ -91,13 +78,12 @@ class DigestService:
             return "暂无新文章。"
 
         # Get config values
-        config = self._get_config()
-        max_articles = config.get("ai_digest_max_articles", 50)
-        max_input_tokens = config.get("ai_digest_max_input_tokens", 131072)
-        max_output_tokens = config.get("ai_digest_max_output_tokens", 8192)
-        title_max_len = config.get("ai_digest_title_max_len", 120)
-        content_max_len = config.get("ai_digest_content_max_len", 2048)
-        fallback_message = config.get("ai_fallback_message", "")
+        max_articles = self.config.get("ai_digest_max_articles", 50)
+        max_input_tokens = self.config.get("ai_digest_max_input_tokens", 131072)
+        max_output_tokens = self.config.get("ai_digest_max_output_tokens", 8192)
+        title_max_len = self.config.get("ai_digest_title_max_len", 120)
+        content_max_len = self.config.get("ai_digest_content_max_len", 2048)
+        fallback_message = self.config.get("ai_fallback_message", "")
 
         # Trim candidates to max articles and truncate fields
         trimmed = self._trim_candidates(
@@ -107,7 +93,7 @@ class DigestService:
             return "暂无新文章。"
 
         # Get system prompt from Persona
-        system_prompt = self._get_persona_system_prompt(group_id)
+        system_prompt = await self._get_persona_system_prompt(group_id)
 
         # Build prompt with articles
         prompt = self._build_prompt(trimmed)
@@ -122,12 +108,11 @@ class DigestService:
                 "Digest input still exceeds token budget=%s, using fallback",
                 max_input_tokens,
             )
-            return self._generate_fallback(trimmed, fallback_message)
+            raise ValueError("Input exceeds token budget even after trimming")
 
         # Try AI generation
         try:
-            ai_provider = await self._get_ai_provider()
-
+            ai_provider = self._get_ai_provider()
             if ai_provider:
                 response = await self.context.llm_generate(
                     chat_provider_id=ai_provider,
@@ -137,18 +122,10 @@ class DigestService:
                 )
                 return response.completion_text
             else:
-                # Use session default provider
-                response = await self._generate_with_default(
-                    prompt, system_prompt, max_output_tokens
-                )
-                if response:
-                    return response
-
+                raise ValueError("No AI provider configured for digest generation")
         except Exception as e:
             logger.error(f"AI digest generation failed: {e}", exc_info=True)
-
-        # Fallback to simple list
-        return self._generate_fallback(trimmed, fallback_message)
+            raise
 
     def _trim_candidates(
         self,
@@ -183,39 +160,10 @@ class DigestService:
             trimmed.append(trimmed_article)
         return trimmed
 
-    async def _get_ai_provider(self) -> str | None:
+    def _get_ai_provider(self) -> str | None:
         """Get configured AI provider ID from plugin config."""
-        try:
-            config = self.context.get_config()
-            if config and isinstance(config, dict):
-                provider_id = config.get("ai_provider", "")
-                if provider_id:
-                    return provider_id
-        except Exception:
-            pass
-        return None
-
-    async def _generate_with_default(
-        self, prompt: str, system_prompt: str, max_output_tokens: int
-    ) -> str | None:
-        """Generate using any available provider."""
-        try:
-            providers = self.context.provider_manager.get_providers()
-            for provider in providers:
-                if hasattr(provider, "provider_id"):
-                    try:
-                        response = await self.context.llm_generate(
-                            chat_provider_id=provider.provider_id,
-                            prompt=prompt,
-                            system_prompt=system_prompt,
-                            max_tokens=max_output_tokens,
-                        )
-                        return response.completion_text
-                    except Exception:
-                        continue
-        except Exception as e:
-            logger.error(f"Failed to generate with default provider: {e}")
-        return None
+        provider_id = self.config.get("ai_provider", "")
+        return provider_id if provider_id else None
 
     def _count_tokens(self, text: str) -> int:
         """
@@ -285,7 +233,7 @@ class DigestService:
         """
         Generate summary for a single article using group's Persona.
         """
-        system_prompt = self._get_persona_system_prompt(group_id)
+        system_prompt = await self._get_persona_system_prompt(group_id)
         prompt = f"Summarize this article:\n\nTITLE: {article.title}\n\nCONTENT: {self._truncate(article.content or '', 1000)}"
 
         try:

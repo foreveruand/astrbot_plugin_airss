@@ -24,8 +24,9 @@ logger = logging.getLogger("astrbot")
 class Main(star.Star):
     """Main class for the RSS plugin."""
 
-    def __init__(self, context: star.Context) -> None:
+    def __init__(self, context: star.Context, config: star.AstrBotConfig) -> None:
         self.context = context
+        self.config = config
         self._initialized = False
 
     async def initialize(self) -> None:
@@ -46,15 +47,14 @@ class Main(star.Star):
         self.db = Database(db_path)
         await self.db.init_db()
 
-        config = self.context.get_config() or {}
         self.fetcher = RSSFetcher(
-            proxy=config.get("proxy") if config.get("enable_proxy") else None,
+            proxy=self.config.get("proxy") if self.config.get("enable_proxy") else None,
             timeout=30,
-            rsshub_url=config.get("rsshub_url"),
-            rsshub_key=config.get("rsshub_key"),
+            rsshub_url=self.config.get("rsshub_url"),
+            rsshub_key=self.config.get("rsshub_key"),
         )
 
-        self.scheduler = RSSScheduler(self.context, self.db, self.fetcher)
+        self.scheduler = RSSScheduler(self.context, self.db, self.fetcher, self.config)
         await self.scheduler.start()
 
         self.rss_commands = RSSCommands(
@@ -65,8 +65,7 @@ class Main(star.Star):
         await self._init_cleanup_job()
 
     async def _init_cleanup_job(self) -> None:
-        config = self.context.get_config() or {}
-        retention_days = config.get("article_retention_days", 30)
+        retention_days = self.config.get("article_retention_days", 30)
 
         async def _cleanup_handler() -> None:
             deleted = await self.db.cleanup_old_articles(retention_days)
@@ -153,9 +152,7 @@ class Main(star.Star):
             rsshub_path = parts[1]
             if self.fetcher.rsshub_url:
                 url = self.fetcher.build_rsshub_url(rsshub_path)
-                event.set_result(
-                    event.make_result().message(f"RSSHub URL: {url}")
-                )
+                event.set_result(event.make_result().message(f"RSSHub URL: {url}"))
             else:
                 event.set_result(
                     event.make_result().message("❌ RSSHub URL not configured")
@@ -205,9 +202,7 @@ class Main(star.Star):
         parts = self._parse_args(args_text)
 
         if not parts:
-            event.set_result(
-                event.make_result().message("Usage: /rssdel <name|id>")
-            )
+            event.set_result(event.make_result().message("Usage: /rssdel <name|id>"))
             return
 
         # Check if first arg is a subscription ID and second arg exists (admin: remove subscriber)
@@ -279,9 +274,9 @@ class Main(star.Star):
 
             try:
                 subscription_id = int(parts[1])
-                config_key = parts[2]
+                config_key = parts[2] if len(parts) > 2 else None
                 config_value = " ".join(
-                    parts[3:]
+                    parts[3:] if len(parts) > 3 else []
                 )  # Join remaining parts for values with spaces
                 await self.rss_commands.rssupdate_global(
                     event, subscription_id, config_key, config_value
@@ -342,9 +337,7 @@ class Main(star.Star):
         name = message.replace("rssgroup add", "").strip()
 
         if not name:
-            event.set_result(
-                event.make_result().message("Usage: /rssgroup add <name>")
-            )
+            event.set_result(event.make_result().message("Usage: /rssgroup add <name>"))
             return
 
         await self.group_commands.group_add(event, name)
@@ -366,9 +359,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            event.set_result(
-                event.make_result().message("Group ID must be a number")
-            )
+            event.set_result(event.make_result().message("Group ID must be a number"))
             return
 
         await self.group_commands.group_rename(event, group_id, parts[1])
@@ -398,9 +389,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            event.set_result(
-                event.make_result().message("Group ID must be a number")
-            )
+            event.set_result(event.make_result().message("Group ID must be a number"))
             return
 
         await self.group_commands.group_timeadd(event, group_id, parts[1])
@@ -424,9 +413,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            event.set_result(
-                event.make_result().message("Group ID must be a number")
-            )
+            event.set_result(event.make_result().message("Group ID must be a number"))
             return
 
         await self.group_commands.group_timedel(event, group_id, parts[1])
@@ -458,9 +445,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            event.set_result(
-                event.make_result().message("Group ID must be a number")
-            )
+            event.set_result(event.make_result().message("Group ID must be a number"))
             return
 
         target_id = parts[1]
@@ -490,9 +475,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            event.set_result(
-                event.make_result().message("Group ID must be a number")
-            )
+            event.set_result(event.make_result().message("Group ID must be a number"))
             return
 
         await self.group_commands.group_subdel(event, group_id, parts[1])

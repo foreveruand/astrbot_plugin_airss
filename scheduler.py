@@ -11,6 +11,7 @@ from .fetcher import RSSFetcher
 from .models import RSSArticle, RSSGroup, RSSSubscription, Subscriber
 
 if TYPE_CHECKING:
+    from astrbot.core.config.astrbot_config import AstrBotConfig
     from astrbot.core.star.context import Context
 
 logger = logging.getLogger("astrbot")
@@ -22,10 +23,17 @@ class RSSScheduler:
     JOB_PREFIX_FETCH = "rss_fetch_"
     JOB_PREFIX_DIGEST = "rss_digest_"
 
-    def __init__(self, context: "Context", db: Database, fetcher: RSSFetcher):
+    def __init__(
+        self,
+        context: "Context",
+        db: Database,
+        fetcher: RSSFetcher,
+        config: "AstrBotConfig",
+    ):
         self.context = context
         self.db = db
         self.fetcher = fetcher
+        self.config = config
 
     async def start(self) -> None:
         """Initialize scheduler and restore all jobs from database."""
@@ -339,7 +347,7 @@ class RSSScheduler:
             # Import digest service here to avoid circular import
             from .digest import DigestService
 
-            digest_service = DigestService(self.context, self.db)
+            digest_service = DigestService(self.context, self.db, self.config)
 
             # Generate digest
             digest_content = await digest_service.generate_digest(
