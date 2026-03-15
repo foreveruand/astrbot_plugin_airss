@@ -72,10 +72,21 @@ class Main(star.Star):
             deleted = await self.db.cleanup_old_articles(retention_days)
             logger.info(f"RSS article cleanup: deleted {deleted} old articles")
 
+        job_name = "RSS Article Cleanup"
+
+        # Delete existing cleanup job first
+        jobs = await self.context.cron_manager.list_jobs(job_type="basic")
+        for job in jobs:
+            if job.name == job_name:
+                await self.context.cron_manager.delete_job(job.job_id)
+                logger.info(f"Deleted existing cleanup job: {job.job_id}")
+                break
+
         await self.context.cron_manager.add_basic_job(
-            name="RSS Article Cleanup",
+            name=job_name,
             cron_expression="0 3 * * *",
             handler=_cleanup_handler,
+            description="RSS插件: 清理过期文章",
             persistent=False,
             enabled=True,
         )
@@ -102,11 +113,10 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        args_text = message.replace("/rssadd", "").strip()
+        args_text = message.replace("rssadd", "").strip()
         parts = self._parse_args(args_text)
-
         if not parts:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message(
                     "Usage:\n"
                     "  /rssadd <url> [name] - Add RSS subscription\n"
@@ -120,7 +130,7 @@ class Main(star.Star):
         # Handle -g flag: subscribe to group
         if parts[0] == "-g":
             if len(parts) < 2:
-                await event.send_event_result(
+                event.set_result(
                     event.make_result().message("Usage: /rssadd -g <group_id>")
                 )
                 return
@@ -128,7 +138,7 @@ class Main(star.Star):
                 group_id = int(parts[1])
                 await self.rss_commands.rssadd_group(event, group_id)
             except ValueError:
-                await event.send_event_result(
+                event.set_result(
                     event.make_result().message("❌ Group ID must be a number")
                 )
             return
@@ -136,18 +146,18 @@ class Main(star.Star):
         # Handle -p flag: print RSSHub URL only
         if parts[0] == "-p":
             if len(parts) < 2:
-                await event.send_event_result(
+                event.set_result(
                     event.make_result().message("Usage: /rssadd -p <rsshub_path>")
                 )
                 return
             rsshub_path = parts[1]
             if self.fetcher.rsshub_url:
                 url = self.fetcher.build_rsshub_url(rsshub_path)
-                await event.send_event_result(
+                event.set_result(
                     event.make_result().message(f"RSSHub URL: {url}")
                 )
             else:
-                await event.send_event_result(
+                event.set_result(
                     event.make_result().message("❌ RSSHub URL not configured")
                 )
             return
@@ -157,7 +167,7 @@ class Main(star.Star):
             subscription_id = int(parts[0])
             # Admin mode: add subscriber
             if len(parts) < 2:
-                await event.send_event_result(
+                event.set_result(
                     event.make_result().message(
                         "Usage: /rssadd <subscription_id> <user/group_id> [adapter] [is_group]"
                     )
@@ -191,11 +201,11 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        args_text = message.replace("/rssdel", "").strip()
+        args_text = message.replace("rssdel", "").strip()
         parts = self._parse_args(args_text)
 
         if not parts:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message("Usage: /rssdel <name|id>")
             )
             return
@@ -236,11 +246,11 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        args_text = message.replace("/rssupdate", "").strip()
+        args_text = message.replace("rssupdate", "").strip()
         parts = self._parse_args(args_text)
 
         if not parts:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message(
                     "Usage:\n"
                     "  /rssupdate <name|id> - Show personalization config\n"
@@ -259,8 +269,8 @@ class Main(star.Star):
                 await self.rss_commands.rssupdate_global_list(event)
                 return
 
-            if len(parts) < 4:
-                await event.send_event_result(
+            if len(parts) < 2:
+                event.set_result(
                     event.make_result().message(
                         "Usage: /rssupdate global <subscription_id> <config> <value>"
                     )
@@ -277,7 +287,7 @@ class Main(star.Star):
                     event, subscription_id, config_key, config_value
                 )
             except ValueError:
-                await event.send_event_result(
+                event.set_result(
                     event.make_result().message("❌ Subscription ID must be a number")
                 )
             return
@@ -285,7 +295,7 @@ class Main(star.Star):
         # Handle 'list_sub' subcommand (admin)
         if parts[0] == "list_sub":
             if len(parts) < 2:
-                await event.send_event_result(
+                event.set_result(
                     event.make_result().message(
                         "Usage: /rssupdate list_sub <subscription_id>"
                     )
@@ -295,7 +305,7 @@ class Main(star.Star):
                 subscription_id = int(parts[1])
                 await self.rss_commands.rssupdate_list_sub(event, subscription_id)
             except ValueError:
-                await event.send_event_result(
+                event.set_result(
                     event.make_result().message("❌ Subscription ID must be a number")
                 )
             return
@@ -314,7 +324,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        name_or_id = message.replace("/rsstrigger", "").strip() or None
+        name_or_id = message.replace("rsstrigger", "").strip() or None
 
         await self.rss_commands.rsstrigger(event, name_or_id)
 
@@ -329,10 +339,10 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        name = message.replace("/rssgroup add", "").strip()
+        name = message.replace("rssgroup add", "").strip()
 
         if not name:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message("Usage: /rssgroup add <name>")
             )
             return
@@ -345,10 +355,10 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("/rssgroup rename", "").strip().split(maxsplit=1)
+        parts = message.replace("rssgroup rename", "").strip().split(maxsplit=1)
 
         if len(parts) < 2:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message("Usage: /rssgroup rename <id> <new_name>")
             )
             return
@@ -356,7 +366,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message("Group ID must be a number")
             )
             return
@@ -375,10 +385,10 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("/rssgroup timeadd", "").strip().split()
+        parts = message.replace("rssgroup timeadd", "").strip().split()
 
         if len(parts) < 2:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message(
                     "Usage: /rssgroup timeadd <group_id> <HH:MM>"
                 )
@@ -388,7 +398,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message("Group ID must be a number")
             )
             return
@@ -401,10 +411,10 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("/rssgroup timedel", "").strip().split()
+        parts = message.replace("rssgroup timedel", "").strip().split()
 
         if len(parts) < 2:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message(
                     "Usage: /rssgroup timedel <group_id> <HH:MM>"
                 )
@@ -414,7 +424,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message("Group ID must be a number")
             )
             return
@@ -433,10 +443,10 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("/rssgroup subadd", "").strip().split()
+        parts = message.replace("rssgroup subadd", "").strip().split()
 
         if len(parts) < 2:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message(
                     "Usage: /rssgroup subadd <group_id> <target_id> [adapter] [is_group]\n"
                     "  adapter: telegram (default), wecom, or webhook\n"
@@ -448,7 +458,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message("Group ID must be a number")
             )
             return
@@ -467,10 +477,10 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("/rssgroup subdel", "").strip().split(maxsplit=1)
+        parts = message.replace("rssgroup subdel", "").strip().split(maxsplit=1)
 
         if len(parts) < 2:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message(
                     "Usage: /rssgroup subdel <group_id> <target_id>"
                 )
@@ -480,7 +490,7 @@ class Main(star.Star):
         try:
             group_id = int(parts[0])
         except ValueError:
-            await event.send_event_result(
+            event.set_result(
                 event.make_result().message("Group ID must be a number")
             )
             return

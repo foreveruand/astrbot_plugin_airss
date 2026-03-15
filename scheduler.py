@@ -33,12 +33,10 @@ class RSSScheduler:
 
     async def _restore_jobs(self) -> None:
         """Restore all jobs from database on plugin startup."""
-        # Restore fetch jobs
         subscriptions = await self.db.get_all_subscriptions()
         for sub in subscriptions:
             await self.schedule_subscription_fetch(sub)
 
-        # Restore digest jobs
         groups = await self.db.get_all_groups()
         for group in groups:
             for schedule in group.schedules:
@@ -48,11 +46,10 @@ class RSSScheduler:
             f"Restored {len(subscriptions)} fetch jobs and digest jobs for {len(groups)} groups"
         )
 
-    def _make_fetch_job_id(self, subscription_id: int) -> str:
+    def _make_fetch_job_name(self, subscription_id: int) -> str:
         return f"{self.JOB_PREFIX_FETCH}{subscription_id}"
 
-    def _make_digest_job_id(self, group_id: int, schedule: str) -> str:
-        # Replace : with _ for job ID
+    def _make_digest_job_name(self, group_id: int, schedule: str) -> str:
         safe_schedule = schedule.replace(":", "_")
         return f"{self.JOB_PREFIX_DIGEST}{group_id}_{safe_schedule}"
 
@@ -70,21 +67,29 @@ class RSSScheduler:
         minute = int(parts[1]) if len(parts) > 1 else 0
         return f"{minute} {hour} * * *"
 
+    async def _delete_job_by_name(self, job_name: str) -> None:
+        """Delete a job by its name from both scheduler and database."""
+        jobs = await self.context.cron_manager.list_jobs(job_type="basic")
+        for job in jobs:
+            if job.name == job_name:
+                await self.context.cron_manager.delete_job(job.job_id)
+                logger.info(f"Deleted existing job: {job_name} (id: {job.job_id})")
+                return
+
     async def schedule_subscription_fetch(self, subscription: RSSSubscription) -> None:
         """Schedule or update fetch job for a subscription."""
-        job_id = self._make_fetch_job_id(subscription.id)
+        job_name = self._make_fetch_job_name(subscription.id)
 
-        # Remove existing job if any
-        await self.remove_subscription_job(subscription.id)
+        await self._delete_job_by_name(job_name)
 
-        # Create new job
         cron_expr = self._interval_to_cron(subscription.interval)
 
         await self.context.cron_manager.add_basic_job(
-            name=f"RSS Fetch: {subscription.name}",
+            name=job_name,
             cron_expression=cron_expr,
             handler=self._fetch_subscription_handler,
             payload={"subscription_id": subscription.id},
+            description=f"RSS订阅抓取: {subscription.name}",
             persistent=True,
         )
 
@@ -160,27 +165,23 @@ class RSSScheduler:
 
     async def remove_subscription_job(self, subscription_id: int) -> None:
         """Remove fetch job for a subscription."""
-        job_id = self._make_fetch_job_id(subscription_id)
-        try:
-            await self.context.cron_manager.delete_job(job_id)
-            logger.info(f"Removed fetch job for subscription {subscription_id}")
-        except Exception:
-            pass  # Job might not exist
+        job_name = self._make_fetch_job_name(subscription_id)
+        await self._delete_job_by_name(job_name)
 
     async def schedule_digest(self, group: RSSGroup, time_str: str) -> None:
         """Schedule a digest job for a group at specific time."""
-        job_id = self._make_digest_job_id(group.id, time_str)
+        job_name = self._make_digest_job_name(group.id, time_str)
 
-        # Remove existing job for this time if any
-        await self.remove_digest_job(group.id, time_str)
+        await self._delete_job_by_name(job_name)
 
         cron_expr = self._schedule_to_cron(time_str)
 
         await self.context.cron_manager.add_basic_job(
-            name=f"RSS Digest: {group.name} at {time_str}",
+            name=job_name,
             cron_expression=cron_expr,
             handler=self._digest_handler,
             payload={"group_id": group.id, "schedule": time_str},
+            description=f"RSS分组摘要推送: {group.name} @ {time_str}",
             persistent=True,
         )
 
@@ -279,12 +280,8 @@ class RSSScheduler:
 
     async def remove_digest_job(self, group_id: int, time_str: str) -> None:
         """Remove a digest job."""
-        job_id = self._make_digest_job_id(group_id, time_str)
-        try:
-            await self.context.cron_manager.delete_job(job_id)
-            logger.info(f"Removed digest job for group {group_id} at {time_str}")
-        except Exception:
-            pass  # Job might not exist
+        job_name = self._make_digest_job_name(group_id, time_str)
+        await self._delete_job_by_name(job_name)
 
     async def remove_all_digest_jobs(self, group_id: int) -> None:
         """Remove all digest jobs for a group."""
