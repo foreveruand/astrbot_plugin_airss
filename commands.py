@@ -165,8 +165,9 @@ class RSSCommands:
         # Fetch feed to get title if name not provided
         if not name:
             result = await self.fetcher.fetch_feed(url)
-            if result.success and result.articles:
-                # Try to get feed title from parsed feed
+            if result.success and result.feed_title:
+                name = result.feed_title
+            elif result.success and result.articles:
                 name = url.split("/")[-1] or "Untitled"
             else:
                 name = url.split("/")[-1] or "Untitled"

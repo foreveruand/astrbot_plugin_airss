@@ -22,6 +22,7 @@ class FetchResult:
 
     success: bool
     articles: list[RSSArticle] = field(default_factory=list)
+    feed_title: str | None = None
     etag: str | None = None
     last_modified: str | None = None
     error: str | None = None
@@ -112,9 +113,17 @@ class RSSFetcher:
 
             articles = self._parse_entries(feed.entries)
 
+            # Get feed title
+            feed_title = None
+            if hasattr(feed, "feed") and hasattr(feed.feed, "title"):
+                feed_title = feed.feed.title
+                if isinstance(feed_title, dict):
+                    feed_title = feed_title.get("value")
+
             return FetchResult(
                 success=True,
                 articles=articles,
+                feed_title=feed_title,
                 etag=new_etag,
                 last_modified=new_last_modified,
             )
