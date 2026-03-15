@@ -9,9 +9,8 @@ from typing import TYPE_CHECKING
 from .database import Database
 from .fetcher import RSSFetcher
 from .models import RSSArticle, RSSGroup, RSSSubscription, Subscriber
-
+from astrbot.api import AstrBotConfig
 if TYPE_CHECKING:
-    from astrbot.core.config.astrbot_config import AstrBotConfig
     from astrbot.core.star.context import Context
 
 logger = logging.getLogger("astrbot")
@@ -28,7 +27,7 @@ class RSSScheduler:
         context: "Context",
         db: Database,
         fetcher: RSSFetcher,
-        config: "AstrBotConfig",
+        config: AstrBotConfig,
     ):
         self.context = context
         self.db = db
@@ -263,7 +262,7 @@ class RSSScheduler:
 
         if only_pic and article.image_urls:
             for img_url in article.image_urls:
-                message_chain.image(url=img_url, use_spoiler=enable_spoiler)
+                message_chain.url_image(url=img_url)
             return message_chain
 
         title = article.title or "Untitled"
@@ -280,8 +279,7 @@ class RSSScheduler:
             message_chain.message(f"📰 **{title}**\n\n{content}\n\n🔗 {link}")
 
             if article.image_urls:
-                config = self.context.get_config() or {}
-                max_images = subscription.max_image_number or config.get(
+                max_images = subscription.max_image_number or self.config.get(
                     "max_image_number", 0
                 )
                 images_to_send = (
@@ -290,7 +288,7 @@ class RSSScheduler:
                     else article.image_urls
                 )
                 for img_url in images_to_send:
-                    message_chain.image(url=img_url, use_spoiler=enable_spoiler)
+                    message_chain.url_image(url=img_url)
 
         return message_chain
 
