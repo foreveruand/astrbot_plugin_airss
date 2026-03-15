@@ -36,13 +36,13 @@ class RSSScheduler:
         # Restore fetch jobs
         subscriptions = await self.db.get_all_subscriptions()
         for sub in subscriptions:
-            await self._schedule_fetch_job(sub)
+            await self.schedule_subscription_fetch(sub)
 
         # Restore digest jobs
         groups = await self.db.get_all_groups()
         for group in groups:
             for schedule in group.schedules:
-                await self._schedule_digest_job(group, schedule)
+                await self.schedule_digest(group, schedule)
 
         logger.info(
             f"Restored {len(subscriptions)} fetch jobs and digest jobs for {len(groups)} groups"
