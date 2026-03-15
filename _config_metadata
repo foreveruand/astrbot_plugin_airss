@@ -1,0 +1,52 @@
+{
+  "ai_provider": {
+    "type": "string",
+    "default": "",
+    "description": "AI Provider ID for digest generation. Empty uses session default.",
+    "hint": "Leave empty to use the session's default AI provider"
+  },
+  "default_interval": {
+    "type": "int",
+    "default": 5,
+    "description": "Default RSS fetch interval in minutes",
+    "min": 1,
+    "max": 1440
+  },
+  "rsshub_url": {
+    "type": "string",
+    "default": "",
+    "description": "RSSHub server URL (optional)",
+    "hint": "Custom RSSHub instance URL, e.g., https://rsshub.app"
+  },
+  "rsshub_key": {
+    "type": "string",
+    "default": "",
+    "description": "RSSHub access key (optional)"
+  },
+  "proxy": {
+    "type": "string",
+    "default": "",
+    "description": "HTTP proxy URL",
+    "hint": "Format: http://host:port"
+  },
+  "enable_proxy": {
+    "type": "bool",
+    "default": false,
+    "description": "Enable proxy for RSS fetching"
+  },
+  "max_articles_per_digest": {
+    "type": "int",
+    "default": 50,
+    "description": "Maximum articles per AI digest"
+  },
+  "article_retention_days": {
+    "type": "int",
+    "default": 30,
+    "description": "Days to keep articles before cleanup"
+  },
+  "ai_fallback_message": {
+    "type": "string",
+    "default": "AI digest unavailable, showing article list.",
+    "description": "Message when AI digest fails"
+  }
+}
