@@ -2,119 +2,119 @@
   "ai_provider": {
     "type": "string",
     "default": "",
-    "description": "AI Provider ID for digest generation. Empty uses session default.",
+    "description": "AI 摘要生成使用的 Provider ID，为空则使用会话默认",
     "hint": "Provider ID from AstrBot's provider list"
   },
   "default_interval": {
     "type": "int",
     "default": 5,
-    "description": "Default RSS fetch interval in minutes",
+    "description": "默认 RSS 抓取间隔（分钟）",
     "min": 1,
     "max": 1440
   },
   "max_error_count": {
     "type": "int",
     "default": 100,
-    "description": "Max consecutive errors before disabling a subscription",
+    "description": "最大连续错误次数，超过后跳过抓取",
     "min": 1,
     "max": 1000
   },
   "max_image_number": {
     "type": "int",
     "default": 0,
-    "description": "Max images per article (0 = unlimited)",
+    "description": "每篇文章最大图片数（0 = 不限制）",
     "min": 0,
     "max": 10
   },
   "enable_spoiler": {
     "type": "bool",
     "default": false,
-    "description": "Wrap images in spoiler tags"
+    "description": "图片使用剧透标签"
   },
   "max_concurrent_fetches": {
     "type": "int",
     "default": 5,
-    "description": "Max concurrent RSS feed fetches",
+    "description": "最大并发 RSS 抓取数",
     "min": 1,
     "max": 20
   },
   "request_timeout": {
     "type": "int",
     "default": 30,
-    "description": "HTTP request timeout in seconds",
+    "description": "HTTP 请求超时时间（秒）",
     "min": 5,
     "max": 120
   },
   "rsshub_url": {
     "type": "string",
     "default": "",
-    "description": "RSSHub server URL (optional)",
+    "description": "RSSHub 服务器地址（可选）",
     "hint": "Custom RSSHub instance URL, e.g., https://rsshub.app"
   },
   "rsshub_key": {
     "type": "string",
     "default": "",
-    "description": "RSSHub access key (optional)"
+    "description": "RSSHub 访问密钥（可选）"
   },
   "proxy": {
     "type": "string",
     "default": "",
-    "description": "HTTP proxy URL",
+    "description": "HTTP 代理地址",
     "hint": "Format: http://host:port"
   },
   "enable_proxy": {
     "type": "bool",
     "default": false,
-    "description": "Enable proxy for RSS fetching"
+    "description": "启用代理进行 RSS 抓取"
   },
   "ai_summary_timezone": {
     "type": "string",
     "default": "Asia/Shanghai",
-    "description": "Timezone for AI digest timestamps"
+    "description": "AI 摘要时区"
   },
   "ai_digest_max_articles": {
     "type": "int",
     "default": 50,
-    "description": "Maximum articles per AI digest",
+    "description": "每次 AI 摘要最大文章数",
     "min": 1,
     "max": 200
   },
   "ai_digest_max_input_tokens": {
     "type": "int",
     "default": 131072,
-    "description": "Maximum input tokens for AI digest",
+    "description": "AI 摘要最大输入 Token 数",
     "hint": "Default 128K tokens, reduce for smaller models"
   },
   "ai_digest_max_output_tokens": {
     "type": "int",
     "default": 8192,
-    "description": "Maximum output tokens for AI digest",
+    "description": "AI 摘要最大输出 Token 数",
     "min": 256,
     "max": 32768
   },
   "ai_digest_title_max_len": {
     "type": "int",
     "default": 120,
-    "description": "Max characters for article title in digest",
+    "description": "摘要中文章标题最大字符数",
     "min": 50,
     "max": 500
   },
   "ai_digest_content_max_len": {
     "type": "int",
     "default": 2048,
-    "description": "Max characters for article content in digest",
+    "description": "摘要中文章内容最大字符数",
     "min": 100,
     "max": 10000
   },
   "ai_fallback_message": {
     "type": "string",
     "default": "",
-    "description": "Message shown when AI digest fails (empty = show article list)"
+    "description": "AI 摘要失败时的提示消息（为空则显示文章列表）"
   },
   "article_retention_days": {
     "type": "int",
     "default": 30,
-    "description": "Days to keep articles before cleanup",
+    "description": "文章保留天数，过期自动清理",
     "min": 1,
     "max": 365
   }

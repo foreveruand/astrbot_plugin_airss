@@ -33,7 +33,12 @@ class Main(star.Star):
         if self._initialized:
             return
 
-        # Setup database
+        await self._init()
+
+        self._initialized = True
+        logger.info("RSS plugin initialized successfully")
+
+    async def _init(self) -> None:
         data_path = Path(get_astrbot_data_path()) / "plugin_data" / "astrbot_plugin_rss"
         data_path.mkdir(parents=True, exist_ok=True)
         db_path = data_path / "rss.db"
@@ -41,7 +46,6 @@ class Main(star.Star):
         self.db = Database(db_path)
         await self.db.init_db()
 
-        # Setup fetcher
         config = self.context.get_config() or {}
         self.fetcher = RSSFetcher(
             proxy=config.get("proxy") if config.get("enable_proxy") else None,
@@ -50,18 +54,31 @@ class Main(star.Star):
             rsshub_key=config.get("rsshub_key"),
         )
 
-        # Setup scheduler
         self.scheduler = RSSScheduler(self.context, self.db, self.fetcher)
         await self.scheduler.start()
 
-        # Setup commands
         self.rss_commands = RSSCommands(
             self.context, self.db, self.scheduler, self.fetcher
         )
         self.group_commands = GroupCommands(self.context, self.db, self.scheduler)
 
-        self._initialized = True
-        logger.info("RSS plugin initialized successfully")
+        await self._init_cleanup_job()
+
+    async def _init_cleanup_job(self) -> None:
+        config = self.context.get_config() or {}
+        retention_days = config.get("article_retention_days", 30)
+
+        async def _cleanup_handler() -> None:
+            deleted = await self.db.cleanup_old_articles(retention_days)
+            logger.info(f"RSS article cleanup: deleted {deleted} old articles")
+
+        await self.context.cron_manager.add_basic_job(
+            name="RSS Article Cleanup",
+            cron_expression="0 3 * * *",
+            handler=_cleanup_handler,
+            persistent=False,
+            enabled=True,
+        )
 
     async def terminate(self) -> None:
         """Called when the plugin is disabled or reloaded."""

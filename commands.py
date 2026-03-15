@@ -6,7 +6,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from astrbot.api.event import AstrMessageEvent
+from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
 from .database import Database
 from .fetcher import RSSFetcher
@@ -124,11 +124,7 @@ class RSSCommands:
             if self.fetcher.rsshub_url:
                 url = self.fetcher.build_rsshub_url(url)
             else:
-                await event.send_event_result(
-                    event.make_result().message(
-                        "❌ Invalid URL. Must start with http:// or https://"
-                    )
-                )
+                event.set_result(MessageEventResult().message("❌ Invalid URL. Must start with http:// or https://"))
                 return
 
         # Check if already exists
@@ -138,17 +134,9 @@ class RSSCommands:
             subscriber = Subscriber(subscription_id=existing.id, umo=umo)
             result = await self.db.add_subscriber(subscriber)
             if result:
-                await event.send_event_result(
-                    event.make_result().message(
-                        f"✅ You have been subscribed to: {existing.name}"
-                    )
-                )
+                event.set_result(MessageEventResult().message(f"✅ You have been subscribed to: {existing.name}"))
             else:
-                await event.send_event_result(
-                    event.make_result().message(
-                        f"ℹ️ You are already subscribed to: {existing.name}"
-                    )
-                )
+                event.set_result(MessageEventResult().message(f"ℹ️ You are already subscribed to: {existing.name}"))
             return
 
         # Fetch feed to get title if name not provided
@@ -179,11 +167,7 @@ class RSSCommands:
         # Schedule fetch job
         await self.scheduler.schedule_subscription_fetch(subscription)
 
-        await event.send_event_result(
-            event.make_result().message(
-                f"✅ Subscription added: {name}\nURL: {url}\nInterval: {interval} minutes"
-            )
-        )
+        event.set_result(MessageEventResult().message(f"✅ Subscription added: {name}\nURL: {url}\nInterval: {interval} minutes"))
 
     async def rssadd_group(self, event: AstrMessageEvent, group_id: int) -> None:
         """Subscribe to all feeds in a group."""
@@ -192,11 +176,7 @@ class RSSCommands:
         # Get all subscriptions in this group
         subscriptions = await self.db.get_subscriptions_by_group(group_id)
         if not subscriptions:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Group {group_id} has no subscriptions or doesn't exist"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Group {group_id} has no subscriptions or doesn't exist"))
             return
 
         # Get group info
@@ -226,7 +206,7 @@ class RSSCommands:
         if skipped_count > 0:
             msg += f"Skipped (already subscribed): {skipped_count}"
 
-        await event.send_event_result(event.make_result().message(msg))
+        event.set_result(MessageEventResult().message(msg))
 
     async def rssadd_subscriber(
         self,
@@ -239,28 +219,18 @@ class RSSCommands:
         """Add a subscriber to an existing subscription (admin only)."""
         # Check admin permission
         if not self._is_admin(event):
-            await event.send_event_result(
-                event.make_result().message("❌ This command requires admin privileges")
-            )
+            event.set_result(MessageEventResult().message("❌ This command requires admin privileges"))
             return
 
         # Validate adapter
         if adapter not in (TELEGRAM_ADAPTER, WECOM_ADAPTER, WEBHOOK_ADAPTER):
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Unsupported adapter: {adapter}. Use telegram, wecom, or webhook"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Unsupported adapter: {adapter}. Use telegram, wecom, or webhook"))
             return
 
         # Get subscription
         subscription = await self.db.get_subscription(subscription_id)
         if not subscription:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Subscription ID {subscription_id} not found"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Subscription ID {subscription_id} not found"))
             return
 
         # Build UMO
@@ -269,11 +239,7 @@ class RSSCommands:
         # Check if already exists
         existing = await self.db.get_subscriber(subscription_id, umo)
         if existing:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ {target_id} is already subscribed to {subscription.name}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ {target_id} is already subscribed to {subscription.name}"))
             return
 
         # Add subscriber
@@ -288,11 +254,7 @@ class RSSCommands:
             if adapter == WEBHOOK_ADAPTER
             else ("group" if is_group else "user")
         )
-        await event.send_event_result(
-            event.make_result().message(
-                f"✅ Added {adapter_type} {target_id} to subscription '{subscription.name}'"
-            )
-        )
+        event.set_result(MessageEventResult().message(f"✅ Added {adapter_type} {target_id} to subscription '{subscription.name}'"))
 
     async def rssdel(self, event: AstrMessageEvent, name_or_id: str) -> None:
         """Delete an RSS subscription or remove subscriber.
@@ -317,9 +279,7 @@ class RSSCommands:
                     break
 
         if not subscription or subscription.id is None:
-            await event.send_event_result(
-                event.make_result().message(f"❌ Subscription not found: {name_or_id}")
-            )
+            event.set_result(MessageEventResult().message(f"❌ Subscription not found: {name_or_id}"))
             return
 
         sub_id = subscription.id
@@ -334,23 +294,11 @@ class RSSCommands:
                 # No more subscribers, delete the subscription
                 await self.scheduler.remove_subscription_job(sub_id)
                 await self.db.delete_subscription(sub_id)
-                await event.send_event_result(
-                    event.make_result().message(
-                        f"✅ Subscription deleted: {subscription.name} (no more subscribers)"
-                    )
-                )
+                event.set_result(MessageEventResult().message(f"✅ Subscription deleted: {subscription.name} (no more subscribers)"))
             else:
-                await event.send_event_result(
-                    event.make_result().message(
-                        f"✅ You have been unsubscribed from: {subscription.name}"
-                    )
-                )
+                event.set_result(MessageEventResult().message(f"✅ You have been unsubscribed from: {subscription.name}"))
         else:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ You are not subscribed to: {subscription.name}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ You are not subscribed to: {subscription.name}"))
 
     async def rssdel_subscriber(
         self,
@@ -361,19 +309,13 @@ class RSSCommands:
         """Remove a subscriber from a subscription (admin only)."""
         # Check admin permission
         if not self._is_admin(event):
-            await event.send_event_result(
-                event.make_result().message("❌ This command requires admin privileges")
-            )
+            event.set_result(MessageEventResult().message("❌ This command requires admin privileges"))
             return
 
         # Get subscription
         subscription = await self.db.get_subscription(subscription_id)
         if not subscription:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Subscription ID {subscription_id} not found"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Subscription ID {subscription_id} not found"))
             return
 
         # Try to find subscriber by UMO (exact match or by ID component)
@@ -393,11 +335,7 @@ class RSSCommands:
                     break
 
         if not found_umo:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Subscriber {target_id} not found in '{subscription.name}'"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Subscriber {target_id} not found in '{subscription.name}'"))
             return
 
         # Delete subscriber
@@ -406,11 +344,7 @@ class RSSCommands:
         # Refresh scheduler
         await self.scheduler.schedule_subscription_fetch(subscription)
 
-        await event.send_event_result(
-            event.make_result().message(
-                f"✅ Removed {target_id} from subscription '{subscription.name}'"
-            )
-        )
+        event.set_result(MessageEventResult().message(f"✅ Removed {target_id} from subscription '{subscription.name}'"))
 
     async def rsslist(self, event: AstrMessageEvent) -> None:
         """List all RSS subscriptions."""
@@ -418,11 +352,7 @@ class RSSCommands:
         all_subs = await self.db.get_all_subscriptions()
 
         if not all_subs:
-            await event.send_event_result(
-                event.make_result().message(
-                    "📭 No subscriptions yet.\nUse /rssadd <url> to add one."
-                )
-            )
+            event.set_result(MessageEventResult().message("📭 No subscriptions yet.\nUse /rssadd <url> to add one."))
             return
 
         lines = ["📰 Your RSS Subscriptions:\n"]
@@ -441,7 +371,7 @@ class RSSCommands:
             )
             lines.append("")
 
-        await event.send_event_result(event.make_result().message("\n".join(lines)))
+        event.set_result(MessageEventResult().message("\n".join(lines)))
 
     async def rssupdate(
         self,
@@ -471,9 +401,7 @@ class RSSCommands:
                     break
 
         if not subscription or subscription.id is None:
-            await event.send_event_result(
-                event.make_result().message(f"❌ Subscription not found: {name_or_id}")
-            )
+            event.set_result(MessageEventResult().message(f"❌ Subscription not found: {name_or_id}"))
             return
 
         sub_id = subscription.id
@@ -481,11 +409,7 @@ class RSSCommands:
         # Check if user is subscriber
         subscriber = await self.db.get_subscriber(sub_id, umo)
         if not subscriber:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ You are not subscribed to: {subscription.name}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ You are not subscribed to: {subscription.name}"))
             return
 
         if not config_key:
@@ -496,17 +420,13 @@ class RSSCommands:
                 current = config.get(key, default)
                 lines.append(f"- {key}: {current}")
             lines.append("\nUsage: /rssupdate <name|id> <key> <value>")
-            await event.send_event_result(event.make_result().message("\n".join(lines)))
+            event.set_result(MessageEventResult().message("\n".join(lines)))
             return
 
         # Update config
         valid_keys = list(PERSONAL_CONFIG_KEYS.keys())
         if config_key not in valid_keys:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Invalid config key. Valid keys: {', '.join(valid_keys)}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Invalid config key. Valid keys: {', '.join(valid_keys)}"))
             return
 
         # Parse value
@@ -524,26 +444,18 @@ class RSSCommands:
         subscriber.personal_config[config_key] = value
         await self.db.update_subscriber(subscriber)
 
-        await event.send_event_result(
-            event.make_result().message(
-                f"✅ Updated {config_key} = {value} for {subscription.name}"
-            )
-        )
+        event.set_result(MessageEventResult().message(f"✅ Updated {config_key} = {value} for {subscription.name}"))
 
     async def rssupdate_global_list(self, event: AstrMessageEvent) -> None:
         """List all subscriptions for global config management (admin only)."""
         if not self._is_admin(event):
-            await event.send_event_result(
-                event.make_result().message("❌ This command requires admin privileges")
-            )
+            event.set_result(MessageEventResult().message("❌ This command requires admin privileges"))
             return
 
         all_subs = await self.db.get_all_subscriptions()
 
         if not all_subs:
-            await event.send_event_result(
-                event.make_result().message("📭 No subscriptions yet.")
-            )
+            event.set_result(MessageEventResult().message("📭 No subscriptions yet."))
             return
 
         lines = ["📋 **All Subscriptions (Global Config)**\n"]
@@ -559,7 +471,7 @@ class RSSCommands:
             lines.append("")
 
         lines.append("Usage: /rssupdate global <subscription_id> <config> <value>")
-        await event.send_event_result(event.make_result().message("\n".join(lines)))
+        event.set_result(MessageEventResult().message("\n".join(lines)))
 
     async def rssupdate_global(
         self,
@@ -570,28 +482,18 @@ class RSSCommands:
     ) -> None:
         """Update subscription global configuration (admin only)."""
         if not self._is_admin(event):
-            await event.send_event_result(
-                event.make_result().message("❌ This command requires admin privileges")
-            )
+            event.set_result(MessageEventResult().message("❌ This command requires admin privileges"))
             return
 
         # Validate config key
         if config_key not in GLOBAL_CONFIGURABLE_FIELDS:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Invalid config key. Valid keys: {', '.join(GLOBAL_CONFIGURABLE_FIELDS)}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Invalid config key. Valid keys: {', '.join(GLOBAL_CONFIGURABLE_FIELDS)}"))
             return
 
         # Get subscription
         subscription = await self.db.get_subscription(subscription_id)
         if not subscription:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Subscription ID {subscription_id} not found"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Subscription ID {subscription_id} not found"))
             return
 
         # Parse value based on field type
@@ -608,9 +510,7 @@ class RSSCommands:
             if config_key == "source_group_id" and isinstance(value, int):
                 group = await self.db.get_group(value)
                 if not group:
-                    await event.send_event_result(
-                        event.make_result().message(f"❌ Group ID {value} not found")
-                    )
+                    event.set_result(MessageEventResult().message(f"❌ Group ID {value} not found"))
                     return
 
             # Update subscription
@@ -620,36 +520,22 @@ class RSSCommands:
             # Refresh scheduler
             await self.scheduler.schedule_subscription_fetch(subscription)
 
-            await event.send_event_result(
-                event.make_result().message(
-                    f"✅ Updated {config_key} = {value} for '{subscription.name}'"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"✅ Updated {config_key} = {value} for '{subscription.name}'"))
         except ValueError:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Invalid value for {config_key}: {config_value}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Invalid value for {config_key}: {config_value}"))
 
     async def rssupdate_list_sub(
         self, event: AstrMessageEvent, subscription_id: int
     ) -> None:
         """List all subscribers for a subscription (admin only)."""
         if not self._is_admin(event):
-            await event.send_event_result(
-                event.make_result().message("❌ This command requires admin privileges")
-            )
+            event.set_result(MessageEventResult().message("❌ This command requires admin privileges"))
             return
 
         # Get subscription
         subscription = await self.db.get_subscription(subscription_id)
         if not subscription:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Subscription ID {subscription_id} not found"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Subscription ID {subscription_id} not found"))
             return
 
         # Get subscribers
@@ -685,7 +571,7 @@ class RSSCommands:
                     f"  {adapter_emoji} `{session_id}` ({adapter_name}) - {status}"
                 )
 
-        await event.send_event_result(event.make_result().message("\n".join(lines)))
+        event.set_result(MessageEventResult().message("\n".join(lines)))
 
     async def rsstrigger(
         self, event: AstrMessageEvent, name_or_id: str | None = None
@@ -705,31 +591,19 @@ class RSSCommands:
                         break
 
             if not subscription or subscription.id is None:
-                await event.send_event_result(
-                    event.make_result().message(
-                        f"❌ Subscription not found: {name_or_id}"
-                    )
-                )
+                event.set_result(MessageEventResult().message(f"❌ Subscription not found: {name_or_id}"))
                 return
 
             # Trigger fetch
             await self.scheduler._fetch_subscription_handler(subscription.id)
-            await event.send_event_result(
-                event.make_result().message(
-                    f"✅ Triggered fetch for: {subscription.name}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"✅ Triggered fetch for: {subscription.name}"))
         else:
             # Trigger all subscriptions
             all_subs = await self.db.get_all_subscriptions()
             for sub in all_subs:
                 if sub.id is not None:
                     await self.scheduler._fetch_subscription_handler(sub.id)
-            await event.send_event_result(
-                event.make_result().message(
-                    f"✅ Triggered fetch for all {len(all_subs)} subscriptions"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"✅ Triggered fetch for all {len(all_subs)} subscriptions"))
 
 
 class GroupCommands:
@@ -764,11 +638,7 @@ class GroupCommands:
                 system_prompt="You are an RSS article summary assistant. Please organize and summarize subscribed articles for users.",
             )
 
-        await event.send_event_result(
-            event.make_result().message(
-                f"✅ Group created: {name} (ID: {group_id})\nPersona: {persona_id}"
-            )
-        )
+        event.set_result(MessageEventResult().message(f"✅ Group created: {name} (ID: {group_id})\nPersona: {persona_id}"))
 
     async def group_rename(
         self, event: AstrMessageEvent, group_id: int, new_name: str
@@ -776,29 +646,21 @@ class GroupCommands:
         """Rename a group."""
         group = await self.db.get_group(group_id)
         if not group:
-            await event.send_event_result(
-                event.make_result().message(f"❌ Group not found: {group_id}")
-            )
+            event.set_result(MessageEventResult().message(f"❌ Group not found: {group_id}"))
             return
 
         old_name = group.name
         group.name = new_name
         await self.db.update_group(group)
 
-        await event.send_event_result(
-            event.make_result().message(f"✅ Group renamed: {old_name} → {new_name}")
-        )
+        event.set_result(MessageEventResult().message(f"✅ Group renamed: {old_name} → {new_name}"))
 
     async def group_list(self, event: AstrMessageEvent) -> None:
         """List all groups."""
         groups = await self.db.get_all_groups()
 
         if not groups:
-            await event.send_event_result(
-                event.make_result().message(
-                    "📭 No groups created yet.\nUse /rssgroup add <name> to create one."
-                )
-            )
+            event.set_result(MessageEventResult().message("📭 No groups created yet.\nUse /rssgroup add <name> to create one."))
             return
 
         lines = ["📂 RSS Groups:\n"]
@@ -813,7 +675,7 @@ class GroupCommands:
             lines.append(f"   Persona: {group.persona_id or 'Default'}")
             lines.append("")
 
-        await event.send_event_result(event.make_result().message("\n".join(lines)))
+        event.set_result(MessageEventResult().message("\n".join(lines)))
 
     async def group_timeadd(
         self, event: AstrMessageEvent, group_id: int, time_str: str
@@ -821,26 +683,16 @@ class GroupCommands:
         """Add a digest schedule to a group."""
         # Validate time format
         if not re.match(r"^\d{1,2}:\d{2}$", time_str):
-            await event.send_event_result(
-                event.make_result().message(
-                    "❌ Invalid time format. Use HH:MM (e.g., 09:00)"
-                )
-            )
+            event.set_result(MessageEventResult().message("❌ Invalid time format. Use HH:MM (e.g., 09:00)"))
             return
 
         group = await self.db.get_group(group_id)
         if not group:
-            await event.send_event_result(
-                event.make_result().message(f"❌ Group not found: {group_id}")
-            )
+            event.set_result(MessageEventResult().message(f"❌ Group not found: {group_id}"))
             return
 
         if time_str in group.schedules:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"ℹ️ Schedule {time_str} already exists for group {group.name}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"ℹ️ Schedule {time_str} already exists for group {group.name}"))
             return
 
         group.schedules.append(time_str)
@@ -849,11 +701,7 @@ class GroupCommands:
         # Schedule the digest job
         await self.scheduler.schedule_digest(group, time_str)
 
-        await event.send_event_result(
-            event.make_result().message(
-                f"✅ Added schedule {time_str} to group {group.name}"
-            )
-        )
+        event.set_result(MessageEventResult().message(f"✅ Added schedule {time_str} to group {group.name}"))
 
     async def group_timedel(
         self, event: AstrMessageEvent, group_id: int, time_str: str
@@ -861,17 +709,11 @@ class GroupCommands:
         """Remove a digest schedule from a group."""
         group = await self.db.get_group(group_id)
         if not group:
-            await event.send_event_result(
-                event.make_result().message(f"❌ Group not found: {group_id}")
-            )
+            event.set_result(MessageEventResult().message(f"❌ Group not found: {group_id}"))
             return
 
         if time_str not in group.schedules:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Schedule {time_str} not found in group {group.name}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Schedule {time_str} not found in group {group.name}"))
             return
 
         group.schedules.remove(time_str)
@@ -881,11 +723,7 @@ class GroupCommands:
         if group.id is not None:
             await self.scheduler.remove_digest_job(group.id, time_str)
 
-        await event.send_event_result(
-            event.make_result().message(
-                f"✅ Removed schedule {time_str} from group {group.name}"
-            )
-        )
+        event.set_result(MessageEventResult().message(f"✅ Removed schedule {time_str} from group {group.name}"))
 
     async def group_subadd(
         self,
@@ -904,28 +742,18 @@ class GroupCommands:
         """
         # Validate adapter
         if adapter not in (TELEGRAM_ADAPTER, WECOM_ADAPTER, WEBHOOK_ADAPTER):
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ Unsupported adapter: {adapter}. Use telegram, wecom, or webhook"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ Unsupported adapter: {adapter}. Use telegram, wecom, or webhook"))
             return
 
         group = await self.db.get_group(group_id)
         if not group:
-            await event.send_event_result(
-                event.make_result().message(f"❌ Group not found: {group_id}")
-            )
+            event.set_result(MessageEventResult().message(f"❌ Group not found: {group_id}"))
             return
 
         # Get all subscriptions in the group and add subscriber to each
         subscriptions = await self.db.get_subscriptions_by_group(group_id)
         if not subscriptions:
-            await event.send_event_result(
-                event.make_result().message(
-                    f"❌ No subscriptions in group {group.name}"
-                )
-            )
+            event.set_result(MessageEventResult().message(f"❌ No subscriptions in group {group.name}"))
             return
 
         # Build UMO
@@ -959,7 +787,7 @@ class GroupCommands:
             result_msg += f"Skipped (already subscribed): {skipped_count}"
         result_msg += f"\nSession: {umo}"
 
-        await event.send_event_result(event.make_result().message(result_msg))
+        event.set_result(MessageEventResult().message(result_msg))
 
     async def group_subdel(
         self,
@@ -974,9 +802,7 @@ class GroupCommands:
         """
         group = await self.db.get_group(group_id)
         if not group:
-            await event.send_event_result(
-                event.make_result().message(f"❌ Group not found: {group_id}")
-            )
+            event.set_result(MessageEventResult().message(f"❌ Group not found: {group_id}"))
             return
 
         # Remove subscriber from all subscriptions in the group
@@ -1018,4 +844,4 @@ class GroupCommands:
         if not_found_count > 0:
             result_msg += f"Not found: {not_found_count}"
 
-        await event.send_event_result(event.make_result().message(result_msg))
+        event.set_result(MessageEventResult().message(result_msg))

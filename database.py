@@ -590,3 +590,25 @@ class Database:
     ) -> list[Subscriber]:
         """Get all subscribers for a subscription. Alias for get_subscribers."""
         return await self.get_subscribers(subscription_id)
+
+    # ==================== Cleanup Operations ====================
+
+    async def cleanup_old_articles(self, retention_days: int = 30) -> int:
+        """Delete articles older than retention_days.
+
+        Args:
+            retention_days: Number of days to retain articles.
+
+        Returns:
+            Count of deleted articles.
+        """
+        async with aiosqlite.connect(self.db_path) as conn:
+            cursor = await conn.execute(
+                """
+                DELETE FROM articles
+                WHERE datetime(fetched_at) < datetime('now', ? || ' days')
+                """,
+                (f"-{retention_days}",),
+            )
+            await conn.commit()
+            return cursor.rowcount
