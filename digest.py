@@ -8,10 +8,10 @@ Persona ID format: rss_group_{group_id}
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from .database import Database
-from .models import RSSArticle, RSSGroup
+from .models import RSSArticle
 
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
@@ -23,12 +23,14 @@ class DigestService:
     """Generates AI-powered digests from RSS articles using AstrBot's Persona system."""
 
     # Minimal fallback prompt used only when no Persona is configured
-    FALLBACK_PROMPT = "Summarize the following RSS articles in a clear, organized format."
+    FALLBACK_PROMPT = (
+        "Summarize the following RSS articles in a clear, organized format."
+    )
 
     def __init__(self, context: "Context", db: Database):
         self.context = context
         self.db = db
-        self._config_cache: Optional[dict] = None
+        self._config_cache: dict | None = None
 
     def _get_config(self) -> dict:
         """Get plugin config with caching."""
@@ -57,7 +59,7 @@ class DigestService:
             System prompt from Persona, or fallback if not found
         """
         persona_id = f"rss_group_{group_id}"
-        
+
         try:
             persona = self.context.persona_manager.get_persona(persona_id)
             if persona and persona.system_prompt:
@@ -98,7 +100,9 @@ class DigestService:
         fallback_message = config.get("ai_fallback_message", "")
 
         # Trim candidates to max articles and truncate fields
-        trimmed = self._trim_candidates(articles[:max_articles], title_max_len, content_max_len)
+        trimmed = self._trim_candidates(
+            articles[:max_articles], title_max_len, content_max_len
+        )
         if not trimmed:
             return "暂无新文章。"
 
@@ -179,7 +183,7 @@ class DigestService:
             trimmed.append(trimmed_article)
         return trimmed
 
-    async def _get_ai_provider(self) -> Optional[str]:
+    async def _get_ai_provider(self) -> str | None:
         """Get configured AI provider ID from plugin config."""
         try:
             config = self.context.get_config()
@@ -193,7 +197,7 @@ class DigestService:
 
     async def _generate_with_default(
         self, prompt: str, system_prompt: str, max_output_tokens: int
-    ) -> Optional[str]:
+    ) -> str | None:
         """Generate using any available provider."""
         try:
             providers = self.context.provider_manager.get_providers()
@@ -254,7 +258,7 @@ class DigestService:
             return ""
         if len(text) <= limit:
             return text
-        return text[:max(0, limit - 1)] + "…"
+        return text[: max(0, limit - 1)] + "…"
 
     def _generate_fallback(
         self, articles: list[RSSArticle], fallback_message: str = ""
@@ -274,19 +278,16 @@ class DigestService:
                 lines.append(f"- {title} [{link}]")
 
         return "\n".join(lines)
-    
+
     async def generate_single_summary(
-        self, 
-        article: RSSArticle, 
-        group_id: int,
-        provider_id: Optional[str] = None
+        self, article: RSSArticle, group_id: int, provider_id: str | None = None
     ) -> str:
         """
         Generate summary for a single article using group's Persona.
         """
         system_prompt = self._get_persona_system_prompt(group_id)
         prompt = f"Summarize this article:\n\nTITLE: {article.title}\n\nCONTENT: {self._truncate(article.content or '', 1000)}"
-        
+
         try:
             if provider_id:
                 response = await self.context.llm_generate(
@@ -297,5 +298,5 @@ class DigestService:
                 return response.completion_text
         except Exception as e:
             logger.error(f"Failed to generate article summary: {e}")
-        
+
         return article.title or "Untitled"

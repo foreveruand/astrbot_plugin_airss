@@ -6,13 +6,12 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
 from urllib.parse import urljoin
 
 import aiohttp
 import feedparser
 
-from .models import RSSArticle, RSSSubscription
+from .models import RSSArticle
 
 logger = logging.getLogger("astrbot")
 
@@ -23,9 +22,9 @@ class FetchResult:
 
     success: bool
     articles: list[RSSArticle] = field(default_factory=list)
-    etag: Optional[str] = None
-    last_modified: Optional[str] = None
-    error: Optional[str] = None
+    etag: str | None = None
+    last_modified: str | None = None
+    error: str | None = None
 
 
 class RSSFetcher:
@@ -33,10 +32,10 @@ class RSSFetcher:
 
     def __init__(
         self,
-        proxy: Optional[str] = None,
+        proxy: str | None = None,
         timeout: int = 30,
-        rsshub_url: Optional[str] = None,
-        rsshub_key: Optional[str] = None,
+        rsshub_url: str | None = None,
+        rsshub_key: str | None = None,
     ):
         self.proxy = proxy
         self.timeout = aiohttp.ClientTimeout(total=timeout)
@@ -52,9 +51,9 @@ class RSSFetcher:
     async def fetch_feed(
         self,
         url: str,
-        etag: Optional[str] = None,
-        last_modified: Optional[str] = None,
-        cookies: Optional[str] = None,
+        etag: str | None = None,
+        last_modified: str | None = None,
+        cookies: str | None = None,
     ) -> FetchResult:
         """
         Fetch and parse an RSS feed.
@@ -106,7 +105,9 @@ class RSSFetcher:
             if feed.bozo and not feed.entries:
                 return FetchResult(
                     success=False,
-                    error=str(feed.bozo_exception) if feed.bozo_exception else "Parse error",
+                    error=str(feed.bozo_exception)
+                    if feed.bozo_exception
+                    else "Parse error",
                 )
 
             articles = self._parse_entries(feed.entries)
@@ -153,18 +154,26 @@ class RSSFetcher:
                 if isinstance(link, dict):
                     link = link.get("href", "")
                 elif isinstance(link, list) and link:
-                    link = link[0].get("href", "") if isinstance(link[0], dict) else str(link[0])
+                    link = (
+                        link[0].get("href", "")
+                        if isinstance(link[0], dict)
+                        else str(link[0])
+                    )
 
                 # Get published date
                 published_at = None
                 if entry.get("published_parsed"):
                     try:
-                        published_at = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+                        published_at = datetime(
+                            *entry.published_parsed[:6], tzinfo=timezone.utc
+                        )
                     except (TypeError, ValueError):
                         pass
                 elif entry.get("updated_parsed"):
                     try:
-                        published_at = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
+                        published_at = datetime(
+                            *entry.updated_parsed[:6], tzinfo=timezone.utc
+                        )
                     except (TypeError, ValueError):
                         pass
 

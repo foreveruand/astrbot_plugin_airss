@@ -6,12 +6,11 @@ import hashlib
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 import aiosqlite
 
 from .models import (
-    PERSONAL_CONFIG_KEYS,
     RSSArticle,
     RSSGroup,
     RSSSubscription,
@@ -27,7 +26,7 @@ class Database:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: Optional[aiosqlite.Connection] = None
+        self._conn: aiosqlite.Connection | None = None
 
     async def init_db(self) -> None:
         """Initialize database tables."""
@@ -38,14 +37,18 @@ class Database:
                     name TEXT NOT NULL,
                     url TEXT NOT NULL UNIQUE,
                     interval INTEGER DEFAULT 5,
-                    group_id INTEGER,
-                    ai_enabled INTEGER DEFAULT 1,
+                    source_group_id INTEGER DEFAULT NULL,
+                    cookies TEXT DEFAULT NULL,
+                    black_keyword TEXT DEFAULT NULL,
+                    content_to_remove TEXT DEFAULT NULL,
+                    max_image_number INTEGER DEFAULT 0,
+                    ai_summary_enabled INTEGER DEFAULT 1,
+                    enable_proxy INTEGER DEFAULT 0,
+                    stop INTEGER DEFAULT 0,
                     error_count INTEGER DEFAULT 0,
-                    last_fetch TEXT,
-                    etag TEXT,
-                    last_modified TEXT,
-                    cookies TEXT,
-                    black_keyword TEXT
+                    last_fetch TEXT DEFAULT NULL,
+                    etag TEXT DEFAULT NULL,
+                    last_modified TEXT DEFAULT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS articles (
@@ -97,23 +100,30 @@ class Database:
         async with aiosqlite.connect(self.db_path) as conn:
             cursor = await conn.execute(
                 """
-                INSERT INTO subscriptions (name, url, interval, group_id, ai_enabled, cookies, black_keyword)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO subscriptions (
+                    name, url, interval, source_group_id, cookies, black_keyword,
+                    content_to_remove, max_image_number, ai_summary_enabled, enable_proxy, stop
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     sub.name,
                     sub.url,
                     sub.interval,
-                    sub.group_id,
-                    1 if sub.ai_enabled else 0,
+                    sub.source_group_id,
                     sub.cookies,
                     sub.black_keyword,
+                    sub.content_to_remove,
+                    sub.max_image_number,
+                    1 if sub.ai_summary_enabled else 0,
+                    1 if sub.enable_proxy else 0,
+                    1 if sub.stop else 0,
                 ),
             )
             await conn.commit()
             return cursor.lastrowid or 0
 
-    async def get_subscription(self, sub_id: int) -> Optional[RSSSubscription]:
+    async def get_subscription(self, sub_id: int) -> RSSSubscription | None:
         """Get subscription by ID."""
         async with aiosqlite.connect(self.db_path) as conn:
             conn.row_factory = aiosqlite.Row
@@ -127,8 +137,18 @@ class Database:
                     name=row["name"],
                     url=row["url"],
                     interval=row["interval"],
-                    group_id=row["group_id"],
-                    ai_enabled=bool(row["ai_enabled"]),
+                    source_group_id=row["source_group_id"],
+                    cookies=row["cookies"],
+                    black_keyword=row["black_keyword"],
+                    content_to_remove=row["content_to_remove"],
+                    max_image_number=row["max_image_number"] or 0,
+                    ai_summary_enabled=bool(
+                        row["ai_summary_enabled"]
+                        if row["ai_summary_enabled"] is not None
+                        else True
+                    ),
+                    enable_proxy=bool(row["enable_proxy"]),
+                    stop=bool(row["stop"]),
                     error_count=row["error_count"],
                     last_fetch=(
                         datetime.fromisoformat(row["last_fetch"])
@@ -137,12 +157,10 @@ class Database:
                     ),
                     etag=row["etag"],
                     last_modified=row["last_modified"],
-                    cookies=row["cookies"],
-                    black_keyword=row["black_keyword"],
                 )
             return None
 
-    async def get_subscription_by_url(self, url: str) -> Optional[RSSSubscription]:
+    async def get_subscription_by_url(self, url: str) -> RSSSubscription | None:
         """Get subscription by URL."""
         async with aiosqlite.connect(self.db_path) as conn:
             conn.row_factory = aiosqlite.Row
@@ -156,8 +174,18 @@ class Database:
                     name=row["name"],
                     url=row["url"],
                     interval=row["interval"],
-                    group_id=row["group_id"],
-                    ai_enabled=bool(row["ai_enabled"]),
+                    source_group_id=row["source_group_id"],
+                    cookies=row["cookies"],
+                    black_keyword=row["black_keyword"],
+                    content_to_remove=row["content_to_remove"],
+                    max_image_number=row["max_image_number"] or 0,
+                    ai_summary_enabled=bool(
+                        row["ai_summary_enabled"]
+                        if row["ai_summary_enabled"] is not None
+                        else True
+                    ),
+                    enable_proxy=bool(row["enable_proxy"]),
+                    stop=bool(row["stop"]),
                     error_count=row["error_count"],
                     last_fetch=(
                         datetime.fromisoformat(row["last_fetch"])
@@ -166,8 +194,6 @@ class Database:
                     ),
                     etag=row["etag"],
                     last_modified=row["last_modified"],
-                    cookies=row["cookies"],
-                    black_keyword=row["black_keyword"],
                 )
             return None
 
@@ -183,8 +209,18 @@ class Database:
                     name=row["name"],
                     url=row["url"],
                     interval=row["interval"],
-                    group_id=row["group_id"],
-                    ai_enabled=bool(row["ai_enabled"]),
+                    source_group_id=row["source_group_id"],
+                    cookies=row["cookies"],
+                    black_keyword=row["black_keyword"],
+                    content_to_remove=row["content_to_remove"],
+                    max_image_number=row["max_image_number"] or 0,
+                    ai_summary_enabled=bool(
+                        row["ai_summary_enabled"]
+                        if row["ai_summary_enabled"] is not None
+                        else True
+                    ),
+                    enable_proxy=bool(row["enable_proxy"]),
+                    stop=bool(row["stop"]),
                     error_count=row["error_count"],
                     last_fetch=(
                         datetime.fromisoformat(row["last_fetch"])
@@ -193,8 +229,6 @@ class Database:
                     ),
                     etag=row["etag"],
                     last_modified=row["last_modified"],
-                    cookies=row["cookies"],
-                    black_keyword=row["black_keyword"],
                 )
                 for row in rows
             ]
@@ -205,23 +239,28 @@ class Database:
             await conn.execute(
                 """
                 UPDATE subscriptions SET
-                    name = ?, url = ?, interval = ?, group_id = ?,
-                    ai_enabled = ?, error_count = ?, last_fetch = ?,
-                    etag = ?, last_modified = ?, cookies = ?, black_keyword = ?
+                    name = ?, url = ?, interval = ?, source_group_id = ?,
+                    cookies = ?, black_keyword = ?, content_to_remove = ?,
+                    max_image_number = ?, ai_summary_enabled = ?, enable_proxy = ?, stop = ?,
+                    error_count = ?, last_fetch = ?, etag = ?, last_modified = ?
                 WHERE id = ?
                 """,
                 (
                     sub.name,
                     sub.url,
                     sub.interval,
-                    sub.group_id,
-                    1 if sub.ai_enabled else 0,
+                    sub.source_group_id,
+                    sub.cookies,
+                    sub.black_keyword,
+                    sub.content_to_remove,
+                    sub.max_image_number,
+                    1 if sub.ai_summary_enabled else 0,
+                    1 if sub.enable_proxy else 0,
+                    1 if sub.stop else 0,
                     sub.error_count,
                     sub.last_fetch.isoformat() if sub.last_fetch else None,
                     sub.etag,
                     sub.last_modified,
-                    sub.cookies,
-                    sub.black_keyword,
                     sub.id,
                 ),
             )
@@ -230,14 +269,18 @@ class Database:
     async def delete_subscription(self, sub_id: int) -> None:
         """Delete subscription and related data."""
         async with aiosqlite.connect(self.db_path) as conn:
-            await conn.execute("DELETE FROM subscribers WHERE subscription_id = ?", (sub_id,))
-            await conn.execute("DELETE FROM articles WHERE subscription_id = ?", (sub_id,))
+            await conn.execute(
+                "DELETE FROM subscribers WHERE subscription_id = ?", (sub_id,)
+            )
+            await conn.execute(
+                "DELETE FROM articles WHERE subscription_id = ?", (sub_id,)
+            )
             await conn.execute("DELETE FROM subscriptions WHERE id = ?", (sub_id,))
             await conn.commit()
 
     # ==================== Article Operations ====================
 
-    async def add_article(self, article: RSSArticle) -> Optional[int]:
+    async def add_article(self, article: RSSArticle) -> int | None:
         """Add article if not exists. Returns article ID or None if duplicate."""
         content_hash = self._hash_content(article.guid, article.link)
         async with aiosqlite.connect(self.db_path) as conn:
@@ -254,7 +297,9 @@ class Database:
                         article.content,
                         article.link,
                         article.guid,
-                        article.published_at.isoformat() if article.published_at else None,
+                        article.published_at.isoformat()
+                        if article.published_at
+                        else None,
                         article.fetched_at.isoformat(),
                         1 if article.is_sent else 0,
                         "|||".join(article.image_urls),
@@ -305,7 +350,9 @@ class Database:
                     ),
                     fetched_at=datetime.fromisoformat(row["fetched_at"]),
                     is_sent=bool(row["is_sent"]),
-                    image_urls=row["image_urls"].split("|||") if row["image_urls"] else [],
+                    image_urls=row["image_urls"].split("|||")
+                    if row["image_urls"]
+                    else [],
                 )
                 for row in rows
             ]
@@ -334,7 +381,7 @@ class Database:
             await conn.commit()
             return cursor.lastrowid or 0
 
-    async def get_group(self, group_id: int) -> Optional[RSSGroup]:
+    async def get_group(self, group_id: int) -> RSSGroup | None:
         """Get group by ID."""
         async with aiosqlite.connect(self.db_path) as conn:
             conn.row_factory = aiosqlite.Row
@@ -395,7 +442,7 @@ class Database:
 
     # ==================== Subscriber Operations ====================
 
-    async def add_subscriber(self, subscriber: Subscriber) -> Optional[int]:
+    async def add_subscriber(self, subscriber: Subscriber) -> int | None:
         """Add subscriber to a subscription. Returns subscriber ID or None if exists."""
         async with aiosqlite.connect(self.db_path) as conn:
             import json
@@ -421,7 +468,8 @@ class Database:
 
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute(
-                "SELECT * FROM subscribers WHERE subscription_id = ?", (subscription_id,)
+                "SELECT * FROM subscribers WHERE subscription_id = ?",
+                (subscription_id,),
             )
             rows = await cursor.fetchall()
             return [
@@ -434,7 +482,7 @@ class Database:
                 for row in rows
             ]
 
-    async def get_subscriber(self, subscription_id: int, umo: str) -> Optional[Subscriber]:
+    async def get_subscriber(self, subscription_id: int, umo: str) -> Subscriber | None:
         """Get specific subscriber."""
         async with aiosqlite.connect(self.db_path) as conn:
             import json
@@ -479,7 +527,7 @@ class Database:
         async with aiosqlite.connect(self.db_path) as conn:
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute(
-                "SELECT * FROM subscriptions WHERE group_id = ?", (group_id,)
+                "SELECT * FROM subscriptions WHERE source_group_id = ?", (group_id,)
             )
             rows = await cursor.fetchall()
             return [
@@ -488,8 +536,18 @@ class Database:
                     name=row["name"],
                     url=row["url"],
                     interval=row["interval"],
-                    group_id=row["group_id"],
-                    ai_enabled=bool(row["ai_enabled"]),
+                    source_group_id=row["source_group_id"],
+                    cookies=row["cookies"],
+                    black_keyword=row["black_keyword"],
+                    content_to_remove=row["content_to_remove"],
+                    max_image_number=row["max_image_number"] or 0,
+                    ai_summary_enabled=bool(
+                        row["ai_summary_enabled"]
+                        if row["ai_summary_enabled"] is not None
+                        else True
+                    ),
+                    enable_proxy=bool(row["enable_proxy"]),
+                    stop=bool(row["stop"]),
                     error_count=row["error_count"],
                     last_fetch=(
                         datetime.fromisoformat(row["last_fetch"])
@@ -498,8 +556,37 @@ class Database:
                     ),
                     etag=row["etag"],
                     last_modified=row["last_modified"],
-                    cookies=row["cookies"],
-                    black_keyword=row["black_keyword"],
                 )
                 for row in rows
             ]
+
+    async def update_subscription_global_config(
+        self, subscription_id: int, key: str, value: Any
+    ) -> None:
+        """Update a single global config field for a subscription.
+
+        Args:
+            subscription_id: The subscription ID
+            key: The field name to update
+            value: The new value
+        """
+        from .models import GLOBAL_CONFIGURABLE_FIELDS
+
+        if key not in GLOBAL_CONFIGURABLE_FIELDS:
+            raise ValueError(f"Field '{key}' is not configurable")
+
+        async with aiosqlite.connect(self.db_path) as conn:
+            # Convert bool to int for SQLite
+            if isinstance(value, bool):
+                value = 1 if value else 0
+            await conn.execute(
+                f"UPDATE subscriptions SET {key} = ? WHERE id = ?",
+                (value, subscription_id),
+            )
+            await conn.commit()
+
+    async def get_subscribers_by_subscription(
+        self, subscription_id: int
+    ) -> list[Subscriber]:
+        """Get all subscribers for a subscription. Alias for get_subscribers."""
+        return await self.get_subscribers(subscription_id)

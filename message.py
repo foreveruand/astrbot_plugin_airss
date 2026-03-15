@@ -6,17 +6,21 @@ import asyncio
 import logging
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
+
+import aiohttp
 
 from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.platform.message_session import MessageSession
 
-from .models import PERSONAL_CONFIG_KEYS, RSSArticle, RSSSubscription, Subscriber
+from .models import RSSArticle, RSSSubscription, Subscriber
 
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
 
 logger = logging.getLogger("astrbot")
+
+MAX_WEBHOOK_TEXT_LENGTH = 4090
 
 
 class MessageFormatter:
@@ -25,8 +29,8 @@ class MessageFormatter:
     @staticmethod
     def format_article(
         article: RSSArticle,
-        subscription: Optional[RSSSubscription] = None,
-        personal_config: Optional[dict] = None,
+        subscription: RSSSubscription | None = None,
+        personal_config: dict | None = None,
     ) -> str:
         """
         Format a single article for sending.
@@ -76,7 +80,7 @@ class MessageFormatter:
     def format_digest(
         articles: list[RSSArticle],
         digest_content: str,
-        group_name: Optional[str] = None,
+        group_name: str | None = None,
     ) -> str:
         """
         Format an AI digest for sending.
@@ -151,7 +155,7 @@ class MessageFormatter:
     def apply_personalization(
         article: RSSArticle,
         personal_config: dict,
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """
         Check if article should be sent based on personalization config.
         Returns (should_send, formatted_content).
@@ -202,6 +206,54 @@ class MessageSender:
     def __init__(self, context: "Context"):
         self.context = context
 
+    def _is_webhook(self, umo: str) -> bool:
+        """Check if UMO is a webhook URL."""
+        return umo.startswith("http://") or umo.startswith("https://")
+
+    async def _send_webhook(
+        self,
+        webhook_url: str,
+        text: str,
+        timeout: int = 10,
+    ) -> bool:
+        """Send message to webhook (WeCom bot format)."""
+        if not text:
+            return False
+
+        truncated = self._truncate_by_bytes(text, MAX_WEBHOOK_TEXT_LENGTH)
+
+        try:
+            payload = {
+                "msgtype": "markdown",
+                "markdown": {"content": truncated},
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    webhook_url,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if result.get("errcode") == 0:
+                            return True
+                        logger.warning(f"Webhook error: {result}")
+                    else:
+                        logger.warning(f"Webhook status: {resp.status}")
+        except Exception as e:
+            logger.error(f"Webhook send failed: {e}")
+
+        return False
+
+    @staticmethod
+    def _truncate_by_bytes(text: str, max_bytes: int) -> str:
+        """Truncate text to max bytes."""
+        encoded = text.encode("utf-8")
+        if len(encoded) <= max_bytes:
+            return text
+        return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
     async def send_to_session(
         self,
         session_str: str,
@@ -211,13 +263,16 @@ class MessageSender:
         Send a message to a specific session.
 
         Args:
-            session_str: Session identifier (UMO format)
+            session_str: Session identifier (UMO format or webhook URL)
             content: Message content
 
         Returns:
             True if sent successfully
         """
         try:
+            if self._is_webhook(session_str):
+                return await self._send_webhook(session_str, content)
+
             session = MessageSession.from_str(session_str)
             message_chain = MessageChain().message(content)
             await self.context.send_message(session, message_chain)
@@ -230,7 +285,7 @@ class MessageSender:
         self,
         subscribers: list[Subscriber],
         content: str,
-        articles: Optional[list[RSSArticle]] = None,
+        articles: list[RSSArticle] | None = None,
     ) -> int:
         """
         Send message to multiple subscribers with personalization.

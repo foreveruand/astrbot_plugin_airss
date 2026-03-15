@@ -15,6 +15,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from .commands import GroupCommands, RSSCommands
 from .database import Database
 from .fetcher import RSSFetcher
+from .models import TELEGRAM_ADAPTER
 from .scheduler import RSSScheduler
 
 logger = logging.getLogger("astrbot")
@@ -54,7 +55,9 @@ class Main(star.Star):
         await self.scheduler.start()
 
         # Setup commands
-        self.rss_commands = RSSCommands(self.context, self.db, self.scheduler, self.fetcher)
+        self.rss_commands = RSSCommands(
+            self.context, self.db, self.scheduler, self.fetcher
+        )
         self.group_commands = GroupCommands(self.context, self.db, self.scheduler)
 
         self._initialized = True
@@ -66,42 +69,134 @@ class Main(star.Star):
 
     def _parse_args(self, message: str) -> list[str]:
         """Parse message into arguments."""
-        parts = message.strip().split(maxsplit=2)
+        parts = message.strip().split()
         return parts if parts else []
 
     @filter.command("rssadd")
     async def rssadd(self, event: AstrMessageEvent) -> None:
-        """Add an RSS subscription. Usage: rssadd <url> [name]"""
+        """Add an RSS subscription.
+
+        Usage:
+            /rssadd <url> [name] - Add RSS subscription
+            /rssadd -g <group_id> - Subscribe to entire group
+            /rssadd -p <rsshub_path> - Print RSSHub URL only
+            /rssadd <subscription_id> <user/group_id> [adapter] [is_group] - Add subscriber (admin)
+        """
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = self._parse_args(message.replace("/rssadd", "").strip())
+        args_text = message.replace("/rssadd", "").strip()
+        parts = self._parse_args(args_text)
 
         if not parts:
             await event.send_event_result(
-                event.make_result().message("Usage: /rssadd <url> [name]")
+                event.make_result().message(
+                    "Usage:\n"
+                    "  /rssadd <url> [name] - Add RSS subscription\n"
+                    "  /rssadd -g <group_id> - Subscribe to entire group\n"
+                    "  /rssadd -p <rsshub_path> - Print RSSHub URL only\n"
+                    "  /rssadd <sub_id> <user_id> [adapter] [is_group] - Add subscriber (admin)"
+                )
             )
             return
 
+        # Handle -g flag: subscribe to group
+        if parts[0] == "-g":
+            if len(parts) < 2:
+                await event.send_event_result(
+                    event.make_result().message("Usage: /rssadd -g <group_id>")
+                )
+                return
+            try:
+                group_id = int(parts[1])
+                await self.rss_commands.rssadd_group(event, group_id)
+            except ValueError:
+                await event.send_event_result(
+                    event.make_result().message("❌ Group ID must be a number")
+                )
+            return
+
+        # Handle -p flag: print RSSHub URL only
+        if parts[0] == "-p":
+            if len(parts) < 2:
+                await event.send_event_result(
+                    event.make_result().message("Usage: /rssadd -p <rsshub_path>")
+                )
+                return
+            rsshub_path = parts[1]
+            if self.fetcher.rsshub_url:
+                url = self.fetcher.build_rsshub_url(rsshub_path)
+                await event.send_event_result(
+                    event.make_result().message(f"RSSHub URL: {url}")
+                )
+            else:
+                await event.send_event_result(
+                    event.make_result().message("❌ RSSHub URL not configured")
+                )
+            return
+
+        # Check if first arg is a subscription ID (admin: add subscriber)
+        try:
+            subscription_id = int(parts[0])
+            # Admin mode: add subscriber
+            if len(parts) < 2:
+                await event.send_event_result(
+                    event.make_result().message(
+                        "Usage: /rssadd <subscription_id> <user/group_id> [adapter] [is_group]"
+                    )
+                )
+                return
+            target_id = parts[1]
+            adapter = parts[2] if len(parts) > 2 else TELEGRAM_ADAPTER
+            is_group = (
+                parts[3].lower() in ("true", "1", "yes") if len(parts) > 3 else False
+            )
+            await self.rss_commands.rssadd_subscriber(
+                event, subscription_id, target_id, adapter, is_group
+            )
+            return
+        except ValueError:
+            pass  # Not an ID, continue with normal flow
+
+        # Normal flow: add subscription
         url = parts[0]
         name = parts[1] if len(parts) > 1 else None
-
         await self.rss_commands.rssadd(event, url, name)
 
     @filter.command("rssdel")
     async def rssdel(self, event: AstrMessageEvent) -> None:
-        """Delete an RSS subscription. Usage: rssdel <name|id>"""
+        """Delete an RSS subscription.
+
+        Usage:
+            /rssdel <name|id> - Delete subscription (or unsubscribe)
+            /rssdel <subscription_id> <user/group_id> - Remove subscriber (admin)
+        """
         await self.initialize()
 
         message = event.message_str.strip()
-        name_or_id = message.replace("/rssdel", "").strip()
+        args_text = message.replace("/rssdel", "").strip()
+        parts = self._parse_args(args_text)
 
-        if not name_or_id:
+        if not parts:
             await event.send_event_result(
                 event.make_result().message("Usage: /rssdel <name|id>")
             )
             return
 
+        # Check if first arg is a subscription ID and second arg exists (admin: remove subscriber)
+        if len(parts) >= 2:
+            try:
+                subscription_id = int(parts[0])
+                target_id = parts[1]
+                await self.rss_commands.rssdel_subscriber(
+                    event, subscription_id, target_id
+                )
+                return
+            except ValueError:
+                pass  # Not an ID, continue with normal flow
+
+        # Normal flow: delete subscription
+        name_or_id = parts[0]
         await self.rss_commands.rssdel(event, name_or_id)
 
     @filter.command("rsslist")
@@ -112,26 +207,91 @@ class Main(star.Star):
 
     @filter.command("rssupdate")
     async def rssupdate(self, event: AstrMessageEvent) -> None:
-        """Update subscription configuration. Usage: rssupdate <name|id> [config] [value]"""
+        """Update subscription configuration.
+
+        Usage:
+            /rssupdate <name|id> - Show personalization config
+            /rssupdate <name|id> <key> <value> - Update personalization
+            /rssupdate global - List all subscriptions (admin)
+            /rssupdate global <sub_id> <config> <value> - Update global config (admin)
+            /rssupdate list_sub <sub_id> - List all subscribers (admin)
+        """
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("/rssupdate", "").strip().split(maxsplit=2)
+        args_text = message.replace("/rssupdate", "").strip()
+        parts = self._parse_args(args_text)
 
         if not parts:
             await event.send_event_result(
-                event.make_result().message("Usage: /rssupdate <name|id> [config] [value]")
+                event.make_result().message(
+                    "Usage:\n"
+                    "  /rssupdate <name|id> - Show personalization config\n"
+                    "  /rssupdate <name|id> <key> <value> - Update personalization\n"
+                    "  /rssupdate global - List all subscriptions (admin)\n"
+                    "  /rssupdate global <sub_id> <config> <value> - Update global config (admin)\n"
+                    "  /rssupdate list_sub <sub_id> - List all subscribers (admin)"
+                )
             )
             return
 
+        # Handle 'global' subcommand (admin)
+        if parts[0] == "global":
+            if len(parts) == 1:
+                # List all subscriptions
+                await self.rss_commands.rssupdate_global_list(event)
+                return
+
+            if len(parts) < 4:
+                await event.send_event_result(
+                    event.make_result().message(
+                        "Usage: /rssupdate global <subscription_id> <config> <value>"
+                    )
+                )
+                return
+
+            try:
+                subscription_id = int(parts[1])
+                config_key = parts[2]
+                config_value = " ".join(
+                    parts[3:]
+                )  # Join remaining parts for values with spaces
+                await self.rss_commands.rssupdate_global(
+                    event, subscription_id, config_key, config_value
+                )
+            except ValueError:
+                await event.send_event_result(
+                    event.make_result().message("❌ Subscription ID must be a number")
+                )
+            return
+
+        # Handle 'list_sub' subcommand (admin)
+        if parts[0] == "list_sub":
+            if len(parts) < 2:
+                await event.send_event_result(
+                    event.make_result().message(
+                        "Usage: /rssupdate list_sub <subscription_id>"
+                    )
+                )
+                return
+            try:
+                subscription_id = int(parts[1])
+                await self.rss_commands.rssupdate_list_sub(event, subscription_id)
+            except ValueError:
+                await event.send_event_result(
+                    event.make_result().message("❌ Subscription ID must be a number")
+                )
+            return
+
+        # Normal flow: update personal config
         name_or_id = parts[0]
         config_key = parts[1] if len(parts) > 1 else None
         config_value = parts[2] if len(parts) > 2 else None
 
         await self.rss_commands.rssupdate(event, name_or_id, config_key, config_value)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("rsstrigger")
+    @filter.permission_type(filter.PermissionType.ADMIN)
     async def rsstrigger(self, event: AstrMessageEvent) -> None:
         """Manually trigger RSS update (admin only). Usage: rsstrigger [name|id]"""
         await self.initialize()
@@ -141,8 +301,8 @@ class Main(star.Star):
 
         await self.rss_commands.rsstrigger(event, name_or_id)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command_group("rssgroup")
+    @filter.permission_type(filter.PermissionType.ADMIN)
     def rssgroup(self) -> None:
         """RSS group management commands (admin only)."""
 
@@ -202,7 +362,9 @@ class Main(star.Star):
 
         if len(parts) < 2:
             await event.send_event_result(
-                event.make_result().message("Usage: /rssgroup timeadd <group_id> <HH:MM>")
+                event.make_result().message(
+                    "Usage: /rssgroup timeadd <group_id> <HH:MM>"
+                )
             )
             return
 
@@ -226,7 +388,9 @@ class Main(star.Star):
 
         if len(parts) < 2:
             await event.send_event_result(
-                event.make_result().message("Usage: /rssgroup timedel <group_id> <HH:MM>")
+                event.make_result().message(
+                    "Usage: /rssgroup timedel <group_id> <HH:MM>"
+                )
             )
             return
 
@@ -242,15 +406,25 @@ class Main(star.Star):
 
     @rssgroup.command("subadd")
     async def rssgroup_subadd(self, event: AstrMessageEvent) -> None:
-        """Add a subscriber to a group. Usage: rssgroup subadd <group_id> <session_id>"""
+        """Add a subscriber to a group.
+
+        Usage: rssgroup subadd <group_id> <target_id> [adapter] [is_group]
+        - target_id: User/group ID or webhook URL
+        - adapter: telegram (default), wecom, or webhook
+        - is_group: true/false (default false, ignored for webhooks)
+        """
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("/rssgroup subadd", "").strip().split(maxsplit=1)
+        parts = message.replace("/rssgroup subadd", "").strip().split()
 
         if len(parts) < 2:
             await event.send_event_result(
-                event.make_result().message("Usage: /rssgroup subadd <group_id> <session_id>")
+                event.make_result().message(
+                    "Usage: /rssgroup subadd <group_id> <target_id> [adapter] [is_group]\n"
+                    "  adapter: telegram (default), wecom, or webhook\n"
+                    "  is_group: true/false (default false, ignored for webhooks)"
+                )
             )
             return
 
@@ -262,11 +436,17 @@ class Main(star.Star):
             )
             return
 
-        await self.group_commands.group_subadd(event, group_id, parts[1])
+        target_id = parts[1]
+        adapter = parts[2] if len(parts) > 2 else TELEGRAM_ADAPTER
+        is_group = parts[3].lower() in ("true", "1", "yes") if len(parts) > 3 else False
+
+        await self.group_commands.group_subadd(
+            event, group_id, target_id, adapter, is_group
+        )
 
     @rssgroup.command("subdel")
     async def rssgroup_subdel(self, event: AstrMessageEvent) -> None:
-        """Remove a subscriber from a group. Usage: rssgroup subdel <group_id> <session_id>"""
+        """Remove a subscriber from a group. Usage: rssgroup subdel <group_id> <target_id>"""
         await self.initialize()
 
         message = event.message_str.strip()
@@ -274,7 +454,9 @@ class Main(star.Star):
 
         if len(parts) < 2:
             await event.send_event_result(
-                event.make_result().message("Usage: /rssgroup subdel <group_id> <session_id>")
+                event.make_result().message(
+                    "Usage: /rssgroup subdel <group_id> <target_id>"
+                )
             )
             return
 

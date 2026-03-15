@@ -4,13 +4,10 @@ Scheduler service for RSS plugin using AstrBot's CronJobManager.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Optional
-
-from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+from typing import TYPE_CHECKING
 
 from .database import Database
-from .fetcher import FetchResult, RSSFetcher
-from .message import MessageFormatter
+from .fetcher import RSSFetcher
 from .models import RSSArticle, RSSGroup, RSSSubscription, Subscriber
 
 if TYPE_CHECKING:
@@ -47,7 +44,9 @@ class RSSScheduler:
             for schedule in group.schedules:
                 await self._schedule_digest_job(group, schedule)
 
-        logger.info(f"Restored {len(subscriptions)} fetch jobs and digest jobs for {len(groups)} groups")
+        logger.info(
+            f"Restored {len(subscriptions)} fetch jobs and digest jobs for {len(groups)} groups"
+        )
 
     def _make_fetch_job_id(self, subscription_id: int) -> str:
         return f"{self.JOB_PREFIX_FETCH}{subscription_id}"
@@ -74,13 +73,13 @@ class RSSScheduler:
     async def schedule_subscription_fetch(self, subscription: RSSSubscription) -> None:
         """Schedule or update fetch job for a subscription."""
         job_id = self._make_fetch_job_id(subscription.id)
-        
+
         # Remove existing job if any
         await self.remove_subscription_job(subscription.id)
-        
+
         # Create new job
         cron_expr = self._interval_to_cron(subscription.interval)
-        
+
         await self.context.cron_manager.add_basic_job(
             name=f"RSS Fetch: {subscription.name}",
             cron_expression=cron_expr,
@@ -88,15 +87,19 @@ class RSSScheduler:
             payload={"subscription_id": subscription.id},
             persistent=True,
         )
-        
-        logger.info(f"Scheduled fetch job for subscription {subscription.id} ({subscription.name}) every {subscription.interval} minutes")
+
+        logger.info(
+            f"Scheduled fetch job for subscription {subscription.id} ({subscription.name}) every {subscription.interval} minutes"
+        )
 
     async def _fetch_subscription_handler(self, subscription_id: int) -> None:
         """Handler for fetch job execution."""
         try:
             subscription = await self.db.get_subscription(subscription_id)
             if not subscription:
-                logger.warning(f"Subscription {subscription_id} not found, skipping fetch")
+                logger.warning(
+                    f"Subscription {subscription_id} not found, skipping fetch"
+                )
                 return
 
             # Check max error count threshold
@@ -128,23 +131,32 @@ class RSSScheduler:
             # Update ETag/Last-Modified
             subscription.etag = result.etag
             subscription.last_modified = result.last_modified
-            subscription.last_fetch = result.articles[0].fetched_at if result.articles else None
+            subscription.last_fetch = (
+                result.articles[0].fetched_at if result.articles else None
+            )
             subscription.error_count = 0
             await self.db.update_subscription(subscription)
 
             # Store new articles
             new_count = 0
             for article in result.articles:
-                exists = await self.db.article_exists(subscription_id, article.guid, article.link)
+                exists = await self.db.article_exists(
+                    subscription_id, article.guid, article.link
+                )
                 if not exists:
                     article.subscription_id = subscription_id
                     await self.db.add_article(article)
                     new_count += 1
 
-            logger.info(f"Fetched {len(result.articles)} articles, {new_count} new for {subscription.name}")
+            logger.info(
+                f"Fetched {len(result.articles)} articles, {new_count} new for {subscription.name}"
+            )
 
         except Exception as e:
-            logger.error(f"Error in fetch handler for subscription {subscription_id}: {e}", exc_info=True)
+            logger.error(
+                f"Error in fetch handler for subscription {subscription_id}: {e}",
+                exc_info=True,
+            )
 
     async def remove_subscription_job(self, subscription_id: int) -> None:
         """Remove fetch job for a subscription."""
@@ -158,12 +170,12 @@ class RSSScheduler:
     async def schedule_digest(self, group: RSSGroup, time_str: str) -> None:
         """Schedule a digest job for a group at specific time."""
         job_id = self._make_digest_job_id(group.id, time_str)
-        
+
         # Remove existing job for this time if any
         await self.remove_digest_job(group.id, time_str)
-        
+
         cron_expr = self._schedule_to_cron(time_str)
-        
+
         await self.context.cron_manager.add_basic_job(
             name=f"RSS Digest: {group.name} at {time_str}",
             cron_expression=cron_expr,
@@ -171,8 +183,10 @@ class RSSScheduler:
             payload={"group_id": group.id, "schedule": time_str},
             persistent=True,
         )
-        
-        logger.info(f"Scheduled digest job for group {group.id} ({group.name}) at {time_str}")
+
+        logger.info(
+            f"Scheduled digest job for group {group.id} ({group.name}) at {time_str}"
+        )
 
     async def _digest_handler(self, group_id: int, schedule: str) -> None:
         """Handler for digest job execution."""
@@ -200,23 +214,31 @@ class RSSScheduler:
 
             # Import digest service here to avoid circular import
             from .digest import DigestService
-            
+
             digest_service = DigestService(self.context, self.db)
-            
+
             # Generate digest
-            digest_content = await digest_service.generate_digest(all_articles, group_id)
-            
+            digest_content = await digest_service.generate_digest(
+                all_articles, group_id
+            )
+
             # Send to all subscribers
-            await self._send_digest_to_subscribers(group, subscriptions, all_articles, digest_content)
-            
+            await self._send_digest_to_subscribers(
+                group, subscriptions, all_articles, digest_content
+            )
+
             # Mark articles as sent
             article_ids = [a.id for a in all_articles if a.id]
             await self.db.mark_articles_sent(article_ids)
-            
-            logger.info(f"Sent digest for group {group_id} with {len(all_articles)} articles")
+
+            logger.info(
+                f"Sent digest for group {group_id} with {len(all_articles)} articles"
+            )
 
         except Exception as e:
-            logger.error(f"Error in digest handler for group {group_id}: {e}", exc_info=True)
+            logger.error(
+                f"Error in digest handler for group {group_id}: {e}", exc_info=True
+            )
 
     async def _send_digest_to_subscribers(
         self,
