@@ -1,0 +1,4 @@
+name: astrbot_plugin_rss
+desc: RSS subscription plugin with AI digest support for AstrBot
+author: AstrBot Team
+version: 1.0.0
