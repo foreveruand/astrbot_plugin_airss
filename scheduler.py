@@ -10,6 +10,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .database import Database
 from .fetcher import FetchResult, RSSFetcher
+from .message import MessageFormatter
 from .models import RSSArticle, RSSGroup, RSSSubscription, Subscriber
 
 if TYPE_CHECKING:
@@ -96,6 +97,17 @@ class RSSScheduler:
             subscription = await self.db.get_subscription(subscription_id)
             if not subscription:
                 logger.warning(f"Subscription {subscription_id} not found, skipping fetch")
+                return
+
+            # Check max error count threshold
+            config = self.context.get_config() or {}
+            max_error_count = config.get("max_error_count", 100)
+
+            if subscription.error_count >= max_error_count:
+                logger.warning(
+                    f"Subscription {subscription_id} ({subscription.name}) exceeded max errors "
+                    f"({subscription.error_count}/{max_error_count}), skipping fetch"
+                )
                 return
 
             # Fetch the feed
@@ -213,28 +225,33 @@ class RSSScheduler:
         articles: list[RSSArticle],
         digest_content: str,
     ) -> None:
-        """Send digest to all subscribers of the group."""
+        """Send digest to all subscribers of the group with personalization."""
         from astrbot.core.message.message_event_result import MessageChain
         from astrbot.core.platform.message_session import MessageSession
-        
-        # Get all unique subscribers across all subscriptions in the group
-        subscriber_umo_set = set()
+
+        # Build a map of UMO -> Subscriber for all subscribers across subscriptions
+        umo_to_subscriber: dict[str, Subscriber] = {}
         for sub in subscriptions:
             subscribers = await self.db.get_subscribers(sub.id)
             for sub_obj in subscribers:
-                if not sub_obj.personal_config.get("stop", False):
-                    subscriber_umo_set.add(sub_obj.umo)
-        
-        # Send to each subscriber
+                # Only keep first occurrence (prefer earlier subscriptions)
+                if sub_obj.umo not in umo_to_subscriber:
+                    umo_to_subscriber[sub_obj.umo] = sub_obj
+
+        # Send to each subscriber with personalization
         tasks = []
-        for umo in subscriber_umo_set:
+        for umo, subscriber in umo_to_subscriber.items():
+            # For digest, only check stop flag (full personalization applies to single articles)
+            if subscriber.personal_config.get("stop", False):
+                continue
+
             try:
                 session = MessageSession.from_str(umo)
                 message_chain = MessageChain().message(digest_content)
                 tasks.append(self.context.send_message(session, message_chain))
             except Exception as e:
                 logger.warning(f"Failed to create session for {umo}: {e}")
-        
+
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 

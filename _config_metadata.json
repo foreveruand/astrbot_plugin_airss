@@ -1,0 +1,121 @@
+{
+  "ai_provider": {
+    "type": "string",
+    "default": "",
+    "description": "AI Provider ID for digest generation. Empty uses session default.",
+    "hint": "Provider ID from AstrBot's provider list"
+  },
+  "default_interval": {
+    "type": "int",
+    "default": 5,
+    "description": "Default RSS fetch interval in minutes",
+    "min": 1,
+    "max": 1440
+  },
+  "max_error_count": {
+    "type": "int",
+    "default": 100,
+    "description": "Max consecutive errors before disabling a subscription",
+    "min": 1,
+    "max": 1000
+  },
+  "max_image_number": {
+    "type": "int",
+    "default": 0,
+    "description": "Max images per article (0 = unlimited)",
+    "min": 0,
+    "max": 10
+  },
+  "enable_spoiler": {
+    "type": "bool",
+    "default": false,
+    "description": "Wrap images in spoiler tags"
+  },
+  "max_concurrent_fetches": {
+    "type": "int",
+    "default": 5,
+    "description": "Max concurrent RSS feed fetches",
+    "min": 1,
+    "max": 20
+  },
+  "request_timeout": {
+    "type": "int",
+    "default": 30,
+    "description": "HTTP request timeout in seconds",
+    "min": 5,
+    "max": 120
+  },
+  "rsshub_url": {
+    "type": "string",
+    "default": "",
+    "description": "RSSHub server URL (optional)",
+    "hint": "Custom RSSHub instance URL, e.g., https://rsshub.app"
+  },
+  "rsshub_key": {
+    "type": "string",
+    "default": "",
+    "description": "RSSHub access key (optional)"
+  },
+  "proxy": {
+    "type": "string",
+    "default": "",
+    "description": "HTTP proxy URL",
+    "hint": "Format: http://host:port"
+  },
+  "enable_proxy": {
+    "type": "bool",
+    "default": false,
+    "description": "Enable proxy for RSS fetching"
+  },
+  "ai_summary_timezone": {
+    "type": "string",
+    "default": "Asia/Shanghai",
+    "description": "Timezone for AI digest timestamps"
+  },
+  "ai_digest_max_articles": {
+    "type": "int",
+    "default": 50,
+    "description": "Maximum articles per AI digest",
+    "min": 1,
+    "max": 200
+  },
+  "ai_digest_max_input_tokens": {
+    "type": "int",
+    "default": 131072,
+    "description": "Maximum input tokens for AI digest",
+    "hint": "Default 128K tokens, reduce for smaller models"
+  },
+  "ai_digest_max_output_tokens": {
+    "type": "int",
+    "default": 8192,
+    "description": "Maximum output tokens for AI digest",
+    "min": 256,
+    "max": 32768
+  },
+  "ai_digest_title_max_len": {
+    "type": "int",
+    "default": 120,
+    "description": "Max characters for article title in digest",
+    "min": 50,
+    "max": 500
+  },
+  "ai_digest_content_max_len": {
+    "type": "int",
+    "default": 2048,
+    "description": "Max characters for article content in digest",
+    "min": 100,
+    "max": 10000
+  },
+  "ai_fallback_message": {
+    "type": "string",
+    "default": "",
+    "description": "Message shown when AI digest fails (empty = show article list)"
+  },
+  "article_retention_days": {
+    "type": "int",
+    "default": 30,
+    "description": "Days to keep articles before cleanup",
+    "min": 1,
+    "max": 365
+  }
+}
