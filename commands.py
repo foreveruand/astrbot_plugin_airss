@@ -27,6 +27,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("astrbot")
 
+# Personal config descriptions for display
+PERSONAL_CONFIG_DESCRIPTIONS = {
+    "only_title": "仅发送标题，不发送内容",
+    "only_pic": "仅发送图片",
+    "only_has_pic": "仅发送有图片的文章",
+    "enable_spoiler": "图片使用剧透标签（隐藏）",
+    "stop": "暂停订阅",
+    "black_keyword": "关键词黑名单，多个用逗号分隔",
+}
+
+# Global config descriptions for display
+GLOBAL_CONFIG_DESCRIPTIONS = {
+    "name": "订阅名称",
+    "url": "订阅地址",
+    "black_keyword": "关键词黑名单，多个用逗号分隔",
+    "cookies": "请求时携带的 Cookies",
+    "content_to_remove": "正则表达式，移除匹配的内容",
+    "max_image_number": "每篇文章最大图片数，0 为不限制",
+    "interval": "抓取间隔（分钟）",
+    "ai_summary_enabled": "是否启用 AI 摘要",
+    "source_group_id": "所属分组 ID，用于定时摘要推送",
+}
+
 # Boolean fields that can be toggled
 PERSONAL_CONFIG_BOOL_FIELDS = [
     "only_title",
@@ -413,20 +436,40 @@ class RSSCommands:
             return
 
         if not config_key:
-            # Show current config
+            # Show current config with descriptions
             config = subscriber.personal_config or {}
-            lines = [f"⚙️ Configuration for **{subscription.name}**:\n"]
+            lines = [
+                f"⚙️ **[{subscription.name}]({subscription.url})** 配置\n",
+                "| 参数 | 当前值 | 说明 |",
+                "|------|--------|------|",
+            ]
             for key, default in PERSONAL_CONFIG_KEYS.items():
                 current = config.get(key, default)
-                lines.append(f"- {key}: {current}")
-            lines.append("\nUsage: /rssupdate <name|id> <key> <value>")
+                desc = PERSONAL_CONFIG_DESCRIPTIONS.get(key, "")
+                if isinstance(current, bool):
+                    current_str = "✅" if current else "❌"
+                else:
+                    current_str = f"`{current}`" if current else "`无`"
+                lines.append(f"| `{key}` | {current_str} | {desc} |")
+
+            lines.append("\n**用法**: `/rssupdate <名称|ID> <参数> <值>`")
             event.set_result(MessageEventResult().message("\n".join(lines)))
             return
 
         # Update config
         valid_keys = list(PERSONAL_CONFIG_KEYS.keys())
         if config_key not in valid_keys:
-            event.set_result(MessageEventResult().message(f"❌ Invalid config key. Valid keys: {', '.join(valid_keys)}"))
+            lines = [
+                f"❌ 无效参数: `{config_key}`\n",
+                "**可用参数列表**:",
+                "| 参数 | 说明 |",
+                "|------|------|",
+            ]
+            for key, _ in PERSONAL_CONFIG_KEYS.items():
+                desc = PERSONAL_CONFIG_DESCRIPTIONS.get(key, "")
+                lines.append(f"| `{key}` | {desc} |")
+            lines.append("\n**用法**: `/rssupdate <名称|ID> <参数> <值>`")
+            event.set_result(MessageEventResult().message("\n".join(lines)))
             return
 
         # Parse value
@@ -458,19 +501,18 @@ class RSSCommands:
             event.set_result(MessageEventResult().message("📭 No subscriptions yet."))
             return
 
-        lines = ["📋 **All Subscriptions (Global Config)**\n"]
+        lines = ["📋 **所有订阅（全局配置）**\n"]
         for sub in all_subs:
             if sub.id is None:
                 continue
             subscribers = await self.db.get_subscribers(sub.id)
-            lines.append(f"**{sub.id}. {sub.name}**")
-            lines.append(f"   URL: {sub.url}")
+            lines.append(f"**{sub.id}. [{sub.name}]({sub.url})**")
             lines.append(
-                f"   Interval: {sub.interval} min, Subscribers: {len(subscribers)}"
+                f"   抓取间隔: `{sub.interval}` 分钟 | 订阅者: `{len(subscribers)}`"
             )
             lines.append("")
 
-        lines.append("Usage: /rssupdate global <subscription_id> <config> <value>")
+        lines.append("**用法**: `/rssupdate global <订阅ID> <参数> <值>`")
         event.set_result(MessageEventResult().message("\n".join(lines)))
 
     async def rssupdate_global(
@@ -487,7 +529,17 @@ class RSSCommands:
 
         # Validate config key
         if config_key not in GLOBAL_CONFIGURABLE_FIELDS:
-            event.set_result(MessageEventResult().message(f"❌ Invalid config key. Valid keys: {', '.join(GLOBAL_CONFIGURABLE_FIELDS)}"))
+            lines = [
+                f"❌ 无效参数: `{config_key}`\n",
+                "**可用参数列表**:",
+                "| 参数 | 说明 |",
+                "|------|------|",
+            ]
+            for key in GLOBAL_CONFIGURABLE_FIELDS:
+                desc = GLOBAL_CONFIG_DESCRIPTIONS.get(key, "")
+                lines.append(f"| `{key}` | {desc} |")
+            lines.append("\n**用法**: `/rssupdate global <订阅ID> <参数> <值>`")
+            event.set_result(MessageEventResult().message("\n".join(lines)))
             return
 
         # Get subscription
