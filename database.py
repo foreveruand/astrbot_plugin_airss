@@ -81,9 +81,19 @@ class Database:
                     UNIQUE(subscription_id, umo)
                 );
 
+                CREATE TABLE IF NOT EXISTS article_sent (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    article_id INTEGER NOT NULL,
+                    subscriber_id INTEGER NOT NULL,
+                    sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(article_id, subscriber_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_articles_subscription ON articles(subscription_id);
                 CREATE INDEX IF NOT EXISTS idx_articles_sent ON articles(is_sent);
                 CREATE INDEX IF NOT EXISTS idx_subscribers_subscription ON subscribers(subscription_id);
+                CREATE INDEX IF NOT EXISTS idx_article_sent_article ON article_sent(article_id);
+                CREATE INDEX IF NOT EXISTS idx_article_sent_subscriber ON article_sent(subscriber_id);
             """)
             await conn.commit()
         logger.info(f"RSS database initialized at {self.db_path}")
@@ -369,6 +379,82 @@ class Database:
             )
             await conn.commit()
 
+    # ==================== Article Sent Tracking (Per-Subscriber) ====================
+
+    async def mark_articles_sent_to_subscriber(
+        self, subscriber_id: int, article_ids: list[int]
+    ) -> None:
+        """Mark articles as sent to a specific subscriber."""
+        if not article_ids:
+            return
+        async with aiosqlite.connect(self.db_path) as conn:
+            for article_id in article_ids:
+                await conn.execute(
+                    """
+                    INSERT OR IGNORE INTO article_sent (article_id, subscriber_id)
+                    VALUES (?, ?)
+                    """,
+                    (article_id, subscriber_id),
+                )
+            await conn.commit()
+
+    async def get_unsent_articles_for_subscriber(
+        self, subscription_id: int, subscriber_id: int
+    ) -> list[RSSArticle]:
+        """Get articles not yet sent to a specific subscriber."""
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            cursor = await conn.execute(
+                """
+                SELECT a.* FROM articles a
+                WHERE a.subscription_id = ?
+                AND a.id NOT IN (
+                    SELECT article_id FROM article_sent WHERE subscriber_id = ?
+                )
+                ORDER BY a.published_at DESC, a.fetched_at DESC
+                """,
+                (subscription_id, subscriber_id),
+            )
+            rows = await cursor.fetchall()
+            return [
+                RSSArticle(
+                    id=row["id"],
+                    subscription_id=row["subscription_id"],
+                    title=row["title"],
+                    content=row["content"],
+                    link=row["link"],
+                    guid=row["guid"],
+                    published_at=(
+                        datetime.fromisoformat(row["published_at"])
+                        if row["published_at"]
+                        else None
+                    ),
+                    fetched_at=datetime.fromisoformat(row["fetched_at"]),
+                    is_sent=bool(row["is_sent"]),
+                    image_urls=row["image_urls"].split("|||")
+                    if row["image_urls"]
+                    else [],
+                )
+                for row in rows
+            ]
+
+    async def mark_all_articles_sent_to_subscriber(
+        self, subscription_id: int, subscriber_id: int
+    ) -> None:
+        """Mark all existing articles for a subscription as sent to a subscriber.
+
+        Used when adding a new subscriber to prevent sending old articles.
+        """
+        async with aiosqlite.connect(self.db_path) as conn:
+            await conn.execute(
+                """
+                INSERT OR IGNORE INTO article_sent (article_id, subscriber_id)
+                SELECT id, ? FROM articles WHERE subscription_id = ?
+                """,
+                (subscriber_id, subscription_id),
+            )
+            await conn.commit()
+
     # ==================== Group Operations ====================
 
     async def add_group(self, group: RSSGroup) -> int:
@@ -443,7 +529,10 @@ class Database:
     # ==================== Subscriber Operations ====================
 
     async def add_subscriber(self, subscriber: Subscriber) -> int | None:
-        """Add subscriber to a subscription. Returns subscriber ID or None if exists."""
+        """Add subscriber to a subscription. Returns subscriber ID or None if exists.
+
+        Also marks all existing articles as sent to prevent sending old articles.
+        """
         async with aiosqlite.connect(self.db_path) as conn:
             import json
 
@@ -457,7 +546,12 @@ class Database:
                     ),
                 )
                 await conn.commit()
-                return cursor.lastrowid
+                subscriber_id = cursor.lastrowid
+                if subscriber_id:
+                    await self.mark_all_articles_sent_to_subscriber(
+                        subscriber.subscription_id, subscriber_id
+                    )
+                return subscriber_id
             except aiosqlite.IntegrityError:
                 return None
 

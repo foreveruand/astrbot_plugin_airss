@@ -107,7 +107,6 @@ class RSSScheduler:
                 )
                 return
 
-            # Check max error count threshold
             config = self.context.get_config() or {}
             max_error_count = config.get("max_error_count", 100)
 
@@ -118,7 +117,6 @@ class RSSScheduler:
                 )
                 return
 
-            # Fetch the feed
             result = await self.fetcher.fetch_feed(
                 url=subscription.url,
                 etag=subscription.etag,
@@ -127,13 +125,11 @@ class RSSScheduler:
             )
 
             if not result.success:
-                # Increment error count
                 subscription.error_count += 1
                 await self.db.update_subscription(subscription)
                 logger.error(f"Failed to fetch {subscription.name}: {result.error}")
                 return
 
-            # Update ETag/Last-Modified
             subscription.etag = result.etag
             subscription.last_modified = result.last_modified
             subscription.last_fetch = (
@@ -142,7 +138,6 @@ class RSSScheduler:
             subscription.error_count = 0
             await self.db.update_subscription(subscription)
 
-            # Store new articles
             new_count = 0
             for article in result.articles:
                 exists = await self.db.article_exists(
@@ -157,11 +152,139 @@ class RSSScheduler:
                 f"Fetched {len(result.articles)} articles, {new_count} new for {subscription.name}"
             )
 
+            if not subscription.ai_summary_enabled:
+                await self._send_articles_to_subscribers(subscription)
+
         except Exception as e:
             logger.error(
                 f"Error in fetch handler for subscription {subscription_id}: {e}",
                 exc_info=True,
             )
+
+    async def _send_articles_to_subscribers(
+        self, subscription: RSSSubscription
+    ) -> None:
+        """Send all unsent articles to each subscriber.
+
+        Gets unsent articles for each subscriber from database and sends
+        with personalization applied.
+        """
+        from astrbot.core.platform.message_session import MessageSession
+
+        from .models import get_effective_bool, get_effective_text
+
+        subscribers = await self.db.get_subscribers(subscription.id)
+        if not subscribers:
+            return
+
+        for subscriber in subscribers:
+            if subscriber.personal_config.get("stop", False):
+                continue
+
+            articles = await self.db.get_unsent_articles_for_subscriber(
+                subscription.id, subscriber.id
+            )
+            if not articles:
+                continue
+
+            for article in articles:
+                black_keyword = get_effective_text(
+                    subscriber, "black_keyword", subscription
+                )
+                if black_keyword:
+                    keywords = [
+                        k.strip() for k in black_keyword.split(",") if k.strip()
+                    ]
+                    title_lower = (article.title or "").lower()
+                    content_lower = (article.content or "").lower()
+                    if any(
+                        kw.lower() in title_lower or kw.lower() in content_lower
+                        for kw in keywords
+                    ):
+                        await self.db.mark_articles_sent_to_subscriber(
+                            subscriber.id, [article.id]
+                        )
+                        continue
+
+                only_has_pic = get_effective_bool(
+                    subscriber, "only_has_pic", subscription
+                )
+                if only_has_pic and not article.image_urls:
+                    await self.db.mark_articles_sent_to_subscriber(
+                        subscriber.id, [article.id]
+                    )
+                    continue
+
+                only_title = get_effective_bool(subscriber, "only_title", subscription)
+                only_pic = get_effective_bool(subscriber, "only_pic", subscription)
+                enable_spoiler = get_effective_bool(
+                    subscriber, "enable_spoiler", subscription
+                )
+
+                message_chain = self._build_article_message(
+                    article,
+                    subscription,
+                    only_title=only_title,
+                    only_pic=only_pic,
+                    enable_spoiler=enable_spoiler,
+                )
+
+                try:
+                    session = MessageSession.from_str(subscriber.umo)
+                    await self.context.send_message(session, message_chain)
+                    await self.db.mark_articles_sent_to_subscriber(
+                        subscriber.id, [article.id]
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to send article {article.id} to {subscriber.umo}: {e}"
+                    )
+
+    def _build_article_message(
+        self,
+        article: RSSArticle,
+        subscription: RSSSubscription,
+        only_title: bool = False,
+        only_pic: bool = False,
+        enable_spoiler: bool = False,
+    ):
+        """Build a message chain for an article."""
+        from astrbot.core.message.message_event_result import MessageChain
+
+        message_chain = MessageChain()
+
+        if only_pic and article.image_urls:
+            for img_url in article.image_urls:
+                message_chain.image(url=img_url, use_spoiler=enable_spoiler)
+            return message_chain
+
+        title = article.title or "Untitled"
+        link = article.link or ""
+
+        if only_title:
+            message_chain.message(f"📰 **{title}**\n{link}")
+        else:
+            content = article.content or ""
+            max_content_len = 500
+            if len(content) > max_content_len:
+                content = content[:max_content_len] + "..."
+
+            message_chain.message(f"📰 **{title}**\n\n{content}\n\n🔗 {link}")
+
+            if article.image_urls:
+                config = self.context.get_config() or {}
+                max_images = subscription.max_image_number or config.get(
+                    "max_image_number", 0
+                )
+                images_to_send = (
+                    article.image_urls[:max_images]
+                    if max_images > 0
+                    else article.image_urls
+                )
+                for img_url in images_to_send:
+                    message_chain.image(url=img_url, use_spoiler=enable_spoiler)
+
+        return message_chain
 
     async def remove_subscription_job(self, subscription_id: int) -> None:
         """Remove fetch job for a subscription."""
@@ -228,10 +351,6 @@ class RSSScheduler:
                 group, subscriptions, all_articles, digest_content
             )
 
-            # Mark articles as sent
-            article_ids = [a.id for a in all_articles if a.id]
-            await self.db.mark_articles_sent(article_ids)
-
             logger.info(
                 f"Sent digest for group {group_id} with {len(all_articles)} articles"
             )
@@ -248,7 +367,11 @@ class RSSScheduler:
         articles: list[RSSArticle],
         digest_content: str,
     ) -> None:
-        """Send digest to all subscribers of the group with personalization."""
+        """Send digest to all subscribers of the group and mark articles as sent.
+
+        One AI digest is generated for the same article group and sent to all
+        related subscribers. After sending, articles are marked as sent per-subscriber.
+        """
         from astrbot.core.message.message_event_result import MessageChain
         from astrbot.core.platform.message_session import MessageSession
 
@@ -257,26 +380,30 @@ class RSSScheduler:
         for sub in subscriptions:
             subscribers = await self.db.get_subscribers(sub.id)
             for sub_obj in subscribers:
-                # Only keep first occurrence (prefer earlier subscriptions)
                 if sub_obj.umo not in umo_to_subscriber:
                     umo_to_subscriber[sub_obj.umo] = sub_obj
 
-        # Send to each subscriber with personalization
-        tasks = []
+        article_ids = [a.id for a in articles if a.id]
+
+        # Send to each subscriber
         for umo, subscriber in umo_to_subscriber.items():
-            # For digest, only check stop flag (full personalization applies to single articles)
             if subscriber.personal_config.get("stop", False):
+                # Still mark as sent even if stopped
+                await self.db.mark_articles_sent_to_subscriber(
+                    subscriber.id, article_ids
+                )
                 continue
 
             try:
                 session = MessageSession.from_str(umo)
                 message_chain = MessageChain().message(digest_content)
-                tasks.append(self.context.send_message(session, message_chain))
+                await self.context.send_message(session, message_chain)
+                # Mark articles as sent for this subscriber
+                await self.db.mark_articles_sent_to_subscriber(
+                    subscriber.id, article_ids
+                )
             except Exception as e:
-                logger.warning(f"Failed to create session for {umo}: {e}")
-
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+                logger.warning(f"Failed to send digest to {umo}: {e}")
 
     async def remove_digest_job(self, group_id: int, time_str: str) -> None:
         """Remove a digest job."""
