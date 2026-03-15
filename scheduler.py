@@ -246,6 +246,15 @@ class RSSScheduler:
                         f"Failed to send article {article.id} to {subscriber.umo}: {e}"
                     )
 
+    def _add_image(
+        self, message_chain, url: str, use_spoiler: bool = False
+    ) -> None:
+        """Add image to message chain, compatible with old AstrBot versions."""
+        try:
+            message_chain.url_image(url=url, use_spoiler=use_spoiler)
+        except TypeError:
+            message_chain.url_image(url=url)
+
     def _build_article_message(
         self,
         article: RSSArticle,
@@ -261,7 +270,7 @@ class RSSScheduler:
         via_line = f"via [{subscription.name}]({article.link})"
         if only_pic and article.image_urls:
             for img_url in article.image_urls:
-                message_chain.url_image(url=img_url,use_spoiler=enable_spoiler)
+                self._add_image(message_chain, img_url, enable_spoiler)
             message_chain.message(via_line)
             return message_chain
 
@@ -288,7 +297,7 @@ class RSSScheduler:
                     else article.image_urls
                 )
                 for img_url in images_to_send:
-                    message_chain.url_image(url=img_url,use_spoiler=enable_spoiler)
+                    self._add_image(message_chain, img_url, enable_spoiler)
 
         return message_chain
 
