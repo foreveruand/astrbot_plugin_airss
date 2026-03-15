@@ -8,7 +8,7 @@ AI-powered digest generation, and multi-platform message delivery.
 import logging
 from pathlib import Path
 
-from astrbot.api import star
+from astrbot.api import star, AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
@@ -24,7 +24,7 @@ logger = logging.getLogger("astrbot")
 class Main(star.Star):
     """Main class for the RSS plugin."""
 
-    def __init__(self, context: star.Context, config: star.AstrBotConfig) -> None:
+    def __init__(self, context: star.Context, config: AstrBotConfig) -> None:
         self.context = context
         self.config = config
         self._initialized = False

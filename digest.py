@@ -17,7 +17,7 @@ from .models import RSSArticle
 
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
-    from astrbot.core.config.astrbot_config import AstrBotConfig
+    from astrbot.api import AstrBotConfig
 
 logger = logging.getLogger("astrbot")
 

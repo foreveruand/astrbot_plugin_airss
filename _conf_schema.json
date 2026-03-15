@@ -2,7 +2,7 @@
   "ai_provider": {
     "type": "string",
     "default": "",
-    "description": "AI 摘要生成使用的 Provider ID，为空则使用会话默认",
+    "description": "AI 摘要生成使用的 Provider ID",
     "hint": "Provider ID from AstrBot's provider list"
   },
   "default_interval": {

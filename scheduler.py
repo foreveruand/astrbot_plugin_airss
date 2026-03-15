@@ -130,34 +130,33 @@ class RSSScheduler:
                 last_modified=subscription.last_modified,
                 cookies=subscription.cookies,
             )
-
+        
             if not result.success:
                 subscription.error_count += 1
                 await self.db.update_subscription(subscription)
                 logger.error(f"Failed to fetch {subscription.name}: {result.error}")
-                return
-
-            subscription.etag = result.etag
-            subscription.last_modified = result.last_modified
-            subscription.last_fetch = (
-                result.articles[0].fetched_at if result.articles else None
-            )
-            subscription.error_count = 0
-            await self.db.update_subscription(subscription)
-
-            new_count = 0
-            for article in result.articles:
-                exists = await self.db.article_exists(
-                    subscription_id, article.guid, article.link
+            else:
+                subscription.etag = result.etag
+                subscription.last_modified = result.last_modified
+                subscription.last_fetch = (
+                    result.articles[0].fetched_at if result.articles else None
                 )
-                if not exists:
-                    article.subscription_id = subscription_id
-                    await self.db.add_article(article)
-                    new_count += 1
+                subscription.error_count = 0
+                await self.db.update_subscription(subscription)
 
-            logger.info(
-                f"Fetched {len(result.articles)} articles, {new_count} new for {subscription.name}"
-            )
+                new_count = 0
+                for article in result.articles:
+                    exists = await self.db.article_exists(
+                        subscription_id, article.guid, article.link
+                    )
+                    if not exists:
+                        article.subscription_id = subscription_id
+                        await self.db.add_article(article)
+                        new_count += 1
+
+                logger.info(
+                    f"Fetched {len(result.articles)} articles, {new_count} new for {subscription.name}"
+                )
 
             if not subscription.ai_summary_enabled:
                 await self._send_articles_to_subscribers(subscription)
@@ -259,24 +258,25 @@ class RSSScheduler:
         from astrbot.core.message.message_event_result import MessageChain
 
         message_chain = MessageChain()
-
+        via_line = f"via [{subscription.name}]({article.link})"
         if only_pic and article.image_urls:
             for img_url in article.image_urls:
-                message_chain.url_image(url=img_url)
+                message_chain.url_image(url=img_url,use_spoiler=enable_spoiler)
+            message_chain.message(via_line)
             return message_chain
 
         title = article.title or "Untitled"
         link = article.link or ""
 
         if only_title:
-            message_chain.message(f"📰 **{title}**\n{link}")
+            message_chain.message(f"📰 **{title}**\n{via_line}")
         else:
             content = article.content or ""
             max_content_len = 500
             if len(content) > max_content_len:
                 content = content[:max_content_len] + "..."
 
-            message_chain.message(f"📰 **{title}**\n\n{content}\n\n🔗 {link}")
+            message_chain.message(f"📰 **{title}**\n\n{content}\n\n🔗 {via_line}")
 
             if article.image_urls:
                 max_images = subscription.max_image_number or self.config.get(
@@ -288,7 +288,7 @@ class RSSScheduler:
                     else article.image_urls
                 )
                 for img_url in images_to_send:
-                    message_chain.url_image(url=img_url)
+                    message_chain.url_image(url=img_url,use_spoiler=enable_spoiler)
 
         return message_chain
 

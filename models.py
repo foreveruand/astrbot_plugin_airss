@@ -33,7 +33,7 @@ class RSSSubscription:
     name: str = ""
     url: str = ""
     interval: int = 5  # fetch interval in minutes
-    source_group_id: int | None = None  # group ID for digest scheduling
+    source_group_id: int = 1  # group ID for digest scheduling
 
     # Global config fields
     cookies: str | None = None
@@ -41,7 +41,7 @@ class RSSSubscription:
     content_to_remove: str | None = None  # regex pattern to remove from content
     max_image_number: int = 0  # 0 = unlimited
     ai_summary_enabled: bool = (
-        True  # True = aggregate in digest, False = send individually
+        False  # True = aggregate in digest, False = send individually
     )
     enable_proxy: bool = False
     stop: bool = False
