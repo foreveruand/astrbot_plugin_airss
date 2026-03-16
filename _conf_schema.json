@@ -2,6 +2,7 @@
   "ai_provider": {
     "type": "string",
     "default": "",
+    "_special": "select_provider",
     "description": "AI 摘要生成使用的 Provider ID",
     "hint": "Provider ID from AstrBot's provider list"
   },
