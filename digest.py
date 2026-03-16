@@ -8,16 +8,14 @@ Persona ID format: rss_group_{group_id}
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any
-
-from astrbot.core.provider.entities import ProviderType
+from typing import TYPE_CHECKING
 
 from .database import Database
 from .models import RSSArticle
 
 if TYPE_CHECKING:
-    from astrbot.core.star.context import Context
     from astrbot.api import AstrBotConfig
+    from astrbot.core.star.context import Context
 
 logger = logging.getLogger("astrbot")
 
@@ -83,7 +81,6 @@ class DigestService:
         max_output_tokens = self.config.get("ai_digest_max_output_tokens", 8192)
         title_max_len = self.config.get("ai_digest_title_max_len", 120)
         content_max_len = self.config.get("ai_digest_content_max_len", 2048)
-        fallback_message = self.config.get("ai_fallback_message", "")
 
         # Trim candidates to max articles and truncate fields
         trimmed = self._trim_candidates(

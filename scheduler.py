@@ -2,18 +2,25 @@
 Scheduler service for RSS plugin using AstrBot's CronJobManager.
 """
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
+
+import aiohttp
+
+from astrbot.api import AstrBotConfig
+from astrbot.core.message.message_event_result import MessageChain
+from astrbot.core.platform.message_session import MessageSession
 
 from .database import Database
 from .fetcher import RSSFetcher
 from .models import RSSArticle, RSSGroup, RSSSubscription, Subscriber
-from astrbot.api import AstrBotConfig
+
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
 
 logger = logging.getLogger("astrbot")
+
+MAX_WEBHOOK_TEXT_LENGTH = 4090
 
 
 class RSSScheduler:
@@ -33,6 +40,75 @@ class RSSScheduler:
         self.db = db
         self.fetcher = fetcher
         self.config = config
+
+    def _is_webhook(self, umo: str) -> bool:
+        """Check if UMO is a webhook URL."""
+        return umo.startswith("http://") or umo.startswith("https://")
+
+    @staticmethod
+    def _truncate_by_bytes(text: str, max_bytes: int) -> str:
+        """Truncate text to max bytes."""
+        encoded = text.encode("utf-8")
+        if len(encoded) <= max_bytes:
+            return text
+        return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+    async def _send_webhook(
+        self,
+        webhook_url: str,
+        text: str,
+        timeout: int = 10,
+    ) -> bool:
+        """Send message to webhook (WeCom bot markdown format)."""
+        if not text:
+            return False
+
+        truncated = self._truncate_by_bytes(text, MAX_WEBHOOK_TEXT_LENGTH)
+
+        try:
+            payload = {
+                "msgtype": "markdown",
+                "markdown": {"content": truncated},
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    webhook_url,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if result.get("errcode") == 0:
+                            return True
+                        logger.warning(f"Webhook error: {result}")
+                    else:
+                        logger.warning(f"Webhook status: {resp.status}")
+        except Exception as e:
+            logger.error(f"Webhook send failed: {e}")
+
+        return False
+
+    async def _send_to_subscriber(
+        self,
+        umo: str,
+        message_chain: MessageChain,
+        text_content: str | None = None,
+    ) -> bool:
+        """Send message to subscriber, handling both platform and webhook."""
+        try:
+            if self._is_webhook(umo):
+                if text_content:
+                    return await self._send_webhook(umo, text_content)
+                logger.warning("Webhook requires text_content for markdown format")
+                return False
+
+            session = MessageSession.from_str(umo)
+            await self.context.send_message(session, message_chain)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send message to {umo}: {e}")
+            return False
 
     async def start(self) -> None:
         """Initialize scheduler and restore all jobs from database."""
@@ -130,7 +206,7 @@ class RSSScheduler:
                 last_modified=subscription.last_modified,
                 cookies=subscription.cookies,
             )
-        
+
             if not result.success:
                 subscription.error_count += 1
                 await self.db.update_subscription(subscription)
@@ -175,8 +251,6 @@ class RSSScheduler:
         Gets unsent articles for each subscriber from database and sends
         with personalization applied.
         """
-        from astrbot.core.platform.message_session import MessageSession
-
         from .models import get_effective_bool, get_effective_text
 
         subscribers = await self.db.get_subscribers(subscription.id)
@@ -235,20 +309,25 @@ class RSSScheduler:
                     enable_spoiler=enable_spoiler,
                 )
 
-                try:
-                    session = MessageSession.from_str(subscriber.umo)
-                    await self.context.send_message(session, message_chain)
+                text_content = self._build_article_text(
+                    article,
+                    subscription,
+                    only_title=only_title,
+                )
+
+                success = await self._send_to_subscriber(
+                    subscriber.umo, message_chain, text_content
+                )
+                if success:
                     await self.db.mark_articles_sent_to_subscriber(
                         subscriber.id, [article.id]
                     )
-                except Exception as e:
+                else:
                     logger.warning(
-                        f"Failed to send article {article.id} to {subscriber.umo}: {e}"
+                        f"Failed to send article {article.id} to {subscriber.umo}"
                     )
 
-    def _add_image(
-        self, message_chain, url: str, use_spoiler: bool = False
-    ) -> None:
+    def _add_image(self, message_chain, url: str, use_spoiler: bool = False) -> None:
         """Add image to message chain, compatible with old AstrBot versions."""
         try:
             message_chain.url_image(url=url, use_spoiler=use_spoiler)
@@ -275,7 +354,6 @@ class RSSScheduler:
             return message_chain
 
         title = article.title or "Untitled"
-        link = article.link or ""
 
         if only_title:
             message_chain.message(f"📰 **{title}**\n{via_line}")
@@ -300,6 +378,32 @@ class RSSScheduler:
                     self._add_image(message_chain, img_url, enable_spoiler)
 
         return message_chain
+
+    def _build_article_text(
+        self,
+        article: RSSArticle,
+        subscription: RSSSubscription,
+        only_title: bool = False,
+    ) -> str:
+        """Build text content for webhook (WeCom markdown format)."""
+        title = article.title or "Untitled"
+        link = article.link or ""
+        via_line = f"[{subscription.name}]({link})"
+
+        if only_title:
+            return f"📰 **{title}**\nvia {via_line}"
+
+        content = article.content or ""
+        max_content_len = 500
+        if len(content) > max_content_len:
+            content = content[:max_content_len] + "..."
+
+        text = f"📰 **{title}**\n\n{content}\n\n🔗 via {via_line}"
+
+        if article.image_urls:
+            text += f"\n\n📷 {len(article.image_urls)} image(s)"
+
+        return text
 
     async def remove_subscription_job(self, subscription_id: int) -> None:
         """Remove fetch job for a subscription."""
@@ -387,9 +491,6 @@ class RSSScheduler:
         One AI digest is generated for the same article group and sent to all
         related subscribers. After sending, articles are marked as sent per-subscriber.
         """
-        from astrbot.core.message.message_event_result import MessageChain
-        from astrbot.core.platform.message_session import MessageSession
-
         # Build a map of UMO -> Subscriber for all subscribers across subscriptions
         umo_to_subscriber: dict[str, Subscriber] = {}
         for sub in subscriptions:
@@ -409,16 +510,15 @@ class RSSScheduler:
                 )
                 continue
 
-            try:
-                session = MessageSession.from_str(umo)
-                message_chain = MessageChain().message(digest_content)
-                await self.context.send_message(session, message_chain)
-                # Mark articles as sent for this subscriber
+            message_chain = MessageChain().message(digest_content)
+            success = await self._send_to_subscriber(umo, message_chain, digest_content)
+
+            if success:
                 await self.db.mark_articles_sent_to_subscriber(
                     subscriber.id, article_ids
                 )
-            except Exception as e:
-                logger.warning(f"Failed to send digest to {umo}: {e}")
+            else:
+                logger.warning(f"Failed to send digest to {umo}")
 
     async def remove_digest_job(self, group_id: int, time_str: str) -> None:
         """Remove a digest job."""

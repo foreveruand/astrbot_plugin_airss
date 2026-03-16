@@ -8,7 +8,7 @@ AI-powered digest generation, and multi-platform message delivery.
 import logging
 from pathlib import Path
 
-from astrbot.api import star, AstrBotConfig
+from astrbot.api import AstrBotConfig, star
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
