@@ -275,8 +275,11 @@ class Main(star.Star):
         # Handle 'global' subcommand (admin)
         if parts[0] == "global":
             if len(parts) == 1:
-                # List all subscriptions
-                await self.rss_commands.rssupdate_global_list(event)
+                # List all subscriptions - use keyboard on Telegram
+                if event.get_platform_name() == "telegram":
+                    await self._show_global_list_keyboard(event)
+                else:
+                    await self.rss_commands.rssupdate_global_list(event)
                 return
 
             if len(parts) < 2:
@@ -293,6 +296,12 @@ class Main(star.Star):
                 config_value = " ".join(
                     parts[3:] if len(parts) > 3 else []
                 )  # Join remaining parts for values with spaces
+
+                # On Telegram with only sub_id, show config keyboard
+                if not config_key and event.get_platform_name() == "telegram":
+                    await self._show_global_config_keyboard(event, subscription_id)
+                    return
+
                 await self.rss_commands.rssupdate_global(
                     event, subscription_id, config_key, config_value
                 )
@@ -658,6 +667,104 @@ class Main(star.Star):
         result.inline_keyboard(buttons)
         event.set_result(result)
 
+    async def _show_global_list_keyboard(self, event: AstrMessageEvent) -> None:
+        """Show inline keyboard with all subscriptions for global config (admin, Telegram only)."""
+        await self.initialize()
+
+        # Check admin permission
+        if event.role not in ("admin", "superuser"):
+            event.set_result(
+                MessageEventResult().message("❌ This command requires admin privileges")
+            )
+            return
+
+        all_subs = await self.db.get_all_subscriptions()
+
+        if not all_subs:
+            event.set_result(
+                MessageEventResult().message("📭 No subscriptions yet.")
+            )
+            return
+
+        # Create session for keyboard
+        session_id = uuid.uuid4().hex[:8]
+        KEYBOARD_SESSIONS[session_id] = {
+            "type": "globalconfig",
+        }
+
+        # Build keyboard buttons
+        buttons = []
+        for sub in all_subs:
+            if sub.id is None:
+                continue
+            subscribers = await self.db.get_subscribers(sub.id)
+            buttons.append([
+                {
+                    "text": f"📰 {sub.name} (ID: {sub.id}) [{len(subscribers)} 订阅者]",
+                    "callback_data": f"globalconfig:{session_id}:{sub.id}",
+                }
+            ])
+
+        result = MessageEventResult()
+        result.message("🔧 **全局配置** - 选择订阅进行配置:")
+        result.inline_keyboard(buttons)
+        event.set_result(result)
+
+    async def _show_global_config_keyboard(
+        self, event: AstrMessageEvent | TelegramCallbackQueryEvent, sub_id: int
+    ) -> None:
+        """Show global config toggle keyboard for a subscription (admin only)."""
+        await self.initialize()
+
+        subscription = await self.db.get_subscription(sub_id)
+        if not subscription:
+            msg = f"❌ Subscription ID {sub_id} not found"
+            if isinstance(event, TelegramCallbackQueryEvent):
+                await event.answer_callback_query(text=msg)
+            else:
+                event.set_result(MessageEventResult().message(msg))
+            return
+
+        # Global config toggle fields (from commands.py)
+        global_config_layout = [
+            [("ai_summary_enabled", "AI摘要", "🤖"), ("enable_proxy", "代理", "🌐")],
+            [("stop", "暂停", "⏸️")],
+        ]
+
+        buttons = []
+        for row in global_config_layout:
+            row_buttons = []
+            for key, text, emoji in row:
+                current_value = getattr(subscription, key, False)
+                status = "✅" if current_value else "⭕"
+                button_text = f"{emoji} {text} {status}"
+                row_buttons.append({
+                    "text": button_text,
+                    "callback_data": f"globaltoggle:{sub_id}:{key}",
+                })
+            buttons.append(row_buttons)
+
+        # Add back button
+        buttons.append([
+            {
+                "text": "⬅️ 返回列表",
+                "callback_data": "globallist",
+            }
+        ])
+
+        result = MessageEventResult()
+        result.message(
+            f"🔧 **[{subscription.name}]({subscription.url})** 全局配置\n\n"
+            f"间隔: {subscription.interval} 分钟\n\n"
+            f"点击按钮切换开关状态:"
+        )
+        result.inline_keyboard(buttons)
+
+        if isinstance(event, TelegramCallbackQueryEvent):
+            event.set_result(result)
+        else:
+            event.set_result(result)
+
     @filter.callback_query()
     async def handle_callback(self, event: TelegramCallbackQueryEvent) -> None:
         """Handle button click callbacks for RSS keyboard interactions."""
@@ -761,6 +868,47 @@ class Main(star.Star):
             if action == "rsslist" and len(parts) >= 3:
                 session_id = parts[1]
                 await self._refresh_rssdel_keyboard(event, session_id)
+                return
+
+            # Handle globalconfig callback (show global config keyboard)
+            if action == "globalconfig" and len(parts) >= 3:
+                session_id = parts[1]
+                sub_id = int(parts[2])
+                await self._show_global_config_keyboard(event, sub_id)
+                return
+
+            # Handle globaltoggle callback (toggle global config)
+            if action == "globaltoggle" and len(parts) >= 3:
+                sub_id = int(parts[1])
+                config_key = parts[2]
+
+                subscription = await self.db.get_subscription(sub_id)
+                if not subscription:
+                    await event.answer_callback_query(text="❌ Subscription not found")
+                    return
+
+                # Toggle the config value
+                current_value = getattr(subscription, config_key, False)
+                setattr(subscription, config_key, not current_value)
+                await self.db.update_subscription(subscription)
+
+                # Refresh scheduler
+                await self.scheduler.schedule_subscription_fetch(subscription)
+
+                # Show toast
+                new_value = getattr(subscription, config_key, False)
+                status_text = "已开启" if new_value else "已关闭"
+                await event.answer_callback_query(
+                    text=f"✅ {config_key} {status_text}"
+                )
+
+                # Refresh config keyboard
+                await self._show_global_config_keyboard(event, sub_id)
+                return
+
+            # Handle globallist callback (back to global list)
+            if action == "globallist":
+                await self._show_global_list_keyboard(event)
                 return
 
         except Exception as e:
