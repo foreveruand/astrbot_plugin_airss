@@ -667,23 +667,23 @@ class Main(star.Star):
         result.inline_keyboard(buttons)
         event.set_result(result)
 
-    async def _show_global_list_keyboard(self, event: AstrMessageEvent) -> None:
+    async def _show_global_list_keyboard(
+        self, event: AstrMessageEvent | TelegramCallbackQueryEvent
+    ) -> None:
         """Show inline keyboard with all subscriptions for global config (admin, Telegram only)."""
         await self.initialize()
 
         # Check admin permission
         if event.role not in ("admin", "superuser"):
-            event.set_result(
-                MessageEventResult().message("❌ This command requires admin privileges")
-            )
+            result = MessageEventResult().message("❌ This command requires admin privileges")
+            event.set_result(result)
             return
 
         all_subs = await self.db.get_all_subscriptions()
 
         if not all_subs:
-            event.set_result(
-                MessageEventResult().message("📭 No subscriptions yet.")
-            )
+            result = MessageEventResult().message("📭 No subscriptions yet.")
+            event.set_result(result)
             return
 
         # Create session for keyboard
