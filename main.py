@@ -748,7 +748,7 @@ class Main(star.Star):
         buttons.append([
             {
                 "text": "⬅️ 返回列表",
-                "callback_data": "globallist",
+                "callback_data": "globallist:0:nop",
             }
         ])
 
