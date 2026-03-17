@@ -6,10 +6,12 @@ AI-powered digest generation, and multi-platform message delivery.
 """
 
 import logging
+import uuid
 from pathlib import Path
 
 from astrbot.api import AstrBotConfig, star
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
+from astrbot.core.platform.sources.telegram.tg_event import TelegramCallbackQueryEvent
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .commands import GroupCommands, RSSCommands
@@ -19,6 +21,9 @@ from .models import TELEGRAM_ADAPTER
 from .scheduler import RSSScheduler
 
 logger = logging.getLogger("astrbot")
+
+# Store keyboard session data for callback handling
+KEYBOARD_SESSIONS: dict[str, dict] = {}
 
 
 class Main(star.Star):
@@ -201,6 +206,11 @@ class Main(star.Star):
         args_text = message.replace("rssdel", "").strip()
         parts = self._parse_args(args_text)
 
+        # On Telegram, show keyboard when no args provided
+        if not parts and event.get_platform_name() == "telegram":
+            await self._show_rssdel_keyboard(event)
+            return
+
         if not parts:
             event.set_result(event.make_result().message("Usage: /rssdel <name|id>"))
             return
@@ -243,6 +253,11 @@ class Main(star.Star):
         message = event.message_str.strip()
         args_text = message.replace("rssupdate", "").strip()
         parts = self._parse_args(args_text)
+
+        # On Telegram, show keyboard when no args provided
+        if not parts and event.get_platform_name() == "telegram":
+            await self._show_rssupdate_keyboard(event)
+            return
 
         if not parts:
             event.set_result(
@@ -479,3 +494,319 @@ class Main(star.Star):
             return
 
         await self.group_commands.group_subdel(event, group_id, parts[1])
+
+    async def _show_rssdel_keyboard(self, event: AstrMessageEvent) -> None:
+        """Show inline keyboard with subscriptions for deletion (Telegram only)."""
+        await self.initialize()
+        umo = event.unified_msg_origin
+        all_subs = await self.db.get_all_subscriptions()
+
+        if not all_subs:
+            event.set_result(
+                MessageEventResult().message(
+                    "📭 No subscriptions yet.\nUse /rssadd <url> to add one."
+                )
+            )
+            return
+
+        # Filter to show only user's subscribed feeds
+        user_subs = []
+        for sub in all_subs:
+            if sub.id is None:
+                continue
+            subscribers = await self.db.get_subscribers(sub.id)
+            if any(s.umo == umo for s in subscribers):
+                user_subs.append(sub)
+
+        if not user_subs:
+            event.set_result(
+                MessageEventResult().message("📭 You have no subscriptions to delete.")
+            )
+            return
+
+        # Create session for keyboard
+        session_id = uuid.uuid4().hex[:8]
+        KEYBOARD_SESSIONS[session_id] = {
+            "umo": umo,
+            "type": "rssdel",
+        }
+
+        # Build keyboard buttons
+        buttons = []
+        for sub in user_subs:
+            buttons.append([
+                {
+                    "text": f"📰 {sub.name} (ID: {sub.id})",
+                    "callback_data": f"rssdel:{session_id}:{sub.id}",
+                }
+            ])
+
+        result = MessageEventResult()
+        result.message("🗑️ Select a subscription to unsubscribe:")
+        result.inline_keyboard(buttons)
+        event.set_result(result)
+
+    async def _show_rssupdate_keyboard(self, event: AstrMessageEvent) -> None:
+        """Show inline keyboard with subscriptions for config (Telegram only)."""
+        await self.initialize()
+        umo = event.unified_msg_origin
+        all_subs = await self.db.get_all_subscriptions()
+
+        if not all_subs:
+            event.set_result(
+                MessageEventResult().message(
+                    "📭 No subscriptions yet.\nUse /rssadd <url> to add one."
+                )
+            )
+            return
+
+        # Filter to show only user's subscribed feeds
+        user_subs = []
+        for sub in all_subs:
+            if sub.id is None:
+                continue
+            subscribers = await self.db.get_subscribers(sub.id)
+            if any(s.umo == umo for s in subscribers):
+                user_subs.append(sub)
+
+        if not user_subs:
+            event.set_result(
+                MessageEventResult().message(
+                    "📭 You have no subscriptions to configure."
+                )
+            )
+            return
+
+        # Create session for keyboard
+        session_id = uuid.uuid4().hex[:8]
+        user_id = event.get_sender_id()
+        KEYBOARD_SESSIONS[session_id] = {
+            "umo": umo,
+            "type": "rssconfig",
+            "user_id": user_id,
+        }
+
+        # Build keyboard buttons
+        buttons = []
+        for sub in user_subs:
+            buttons.append([
+                {
+                    "text": f"📰 {sub.name} (ID: {sub.id})",
+                    "callback_data": f"rssconfig:{session_id}:{sub.id}:{user_id}",
+                }
+            ])
+
+        result = MessageEventResult()
+        result.message("⚙️ Select a subscription to configure:")
+        result.inline_keyboard(buttons)
+        event.set_result(result)
+
+    async def _show_config_keyboard(
+        self,
+        event: TelegramCallbackQueryEvent,
+        session_id: str,
+        sub_id: int,
+        user_id: str,
+    ) -> None:
+        """Show config toggle keyboard for a subscription."""
+        session = KEYBOARD_SESSIONS.get(session_id)
+        if not session:
+            await event.answer_callback_query(text="❌ Session expired")
+            return
+
+        subscription = await self.db.get_subscription(sub_id)
+        if not subscription:
+            await event.answer_callback_query(text="❌ Subscription not found")
+            return
+
+        # Get subscriber
+        subscriber = await self.db.get_subscriber(sub_id, session["umo"])
+        if not subscriber:
+            await event.answer_callback_query(text="❌ You are not subscribed")
+            return
+
+        # Build config buttons with toggle status
+        config_layout = [
+            [("only_title", "仅标题", "📄"), ("only_pic", "仅图片", "🖼️"), ("only_has_pic", "有图片才发", "📸")],
+            [("enable_spoiler", "图片遮挡", "👁️"), ("stop", "暂停订阅", "⏸️")],
+        ]
+
+        buttons = []
+        config = subscriber.personal_config or {}
+        for row in config_layout:
+            row_buttons = []
+            for key, text, emoji in row:
+                current_value = config.get(key, False)
+                status = "✅" if current_value else "⭕"
+                button_text = f"{emoji} {text} {status}"
+                row_buttons.append({
+                    "text": button_text,
+                    "callback_data": f"toggle:{session_id}:{sub_id}:{user_id}:{key}",
+                })
+            buttons.append(row_buttons)
+
+        # Add back button
+        buttons.append([
+            {
+                "text": "⬅️ 返回列表",
+                "callback_data": f"rsslist:{session_id}:{user_id}",
+            }
+        ])
+
+        result = MessageEventResult()
+        result.message(f"⚙️ **[{subscription.name}]({subscription.url})** 配置\n\n点击按钮切换开关状态:")
+        result.inline_keyboard(buttons)
+        event.set_result(result)
+
+    @filter.callback_query()
+    async def handle_callback(self, event: TelegramCallbackQueryEvent) -> None:
+        """Handle button click callbacks for RSS keyboard interactions."""
+        try:
+            data = event.data
+            if not data:
+                return
+
+            parts = data.split(":")
+            if len(parts) < 2:
+                return
+
+            action = parts[0]
+
+            # Handle rssdel callback
+            if action == "rssdel" and len(parts) >= 3:
+                session_id = parts[1]
+                sub_id = int(parts[2])
+
+                session = KEYBOARD_SESSIONS.get(session_id)
+                if not session:
+                    await event.answer_callback_query(text="❌ Session expired")
+                    return
+
+                # Get subscription
+                subscription = await self.db.get_subscription(sub_id)
+                if not subscription:
+                    await event.answer_callback_query(text="❌ Subscription not found")
+                    return
+
+                # Delete subscriber
+                await self.db.delete_subscriber(sub_id, session["umo"])
+
+                # Check if any subscribers left
+                remaining = await self.db.get_subscribers(sub_id)
+                if not remaining:
+                    await self.scheduler.remove_subscription_job(sub_id)
+                    await self.db.delete_subscription(sub_id)
+                    await event.answer_callback_query(
+                        text=f"✅ Deleted: {subscription.name}"
+                    )
+                else:
+                    await event.answer_callback_query(
+                        text=f"✅ Unsubscribed from: {subscription.name}"
+                    )
+
+                # Refresh keyboard
+                await self._refresh_rssdel_keyboard(event, session_id)
+                return
+
+            # Handle rssconfig callback (show config keyboard)
+            if action == "rssconfig" and len(parts) >= 4:
+                session_id = parts[1]
+                sub_id = int(parts[2])
+                user_id = parts[3]
+                await self._show_config_keyboard(event, session_id, sub_id, user_id)
+                return
+
+            # Handle toggle callback
+            if action == "toggle" and len(parts) >= 5:
+                session_id = parts[1]
+                sub_id = int(parts[2])
+                user_id = parts[3]
+                config_key = parts[4]
+
+                session = KEYBOARD_SESSIONS.get(session_id)
+                if not session:
+                    await event.answer_callback_query(text="❌ Session expired")
+                    return
+
+                # Get subscription and subscriber
+                subscription = await self.db.get_subscription(sub_id)
+                if not subscription:
+                    await event.answer_callback_query(text="❌ Subscription not found")
+                    return
+
+                subscriber = await self.db.get_subscriber(sub_id, session["umo"])
+                if not subscriber:
+                    await event.answer_callback_query(text="❌ You are not subscribed")
+                    return
+
+                # Toggle the config value
+                if subscriber.personal_config is None:
+                    subscriber.personal_config = {}
+                current_value = subscriber.personal_config.get(config_key, False)
+                subscriber.personal_config[config_key] = not current_value
+                await self.db.update_subscriber(subscriber)
+
+                # Show toast
+                new_value = subscriber.personal_config[config_key]
+                status_text = "enabled" if new_value else "disabled"
+                await event.answer_callback_query(
+                    text=f"✅ {config_key} {status_text}"
+                )
+
+                # Refresh config keyboard
+                await self._show_config_keyboard(event, session_id, sub_id, user_id)
+                return
+
+            # Handle rsslist callback (back to list)
+            if action == "rsslist" and len(parts) >= 3:
+                session_id = parts[1]
+                await self._refresh_rssdel_keyboard(event, session_id)
+                return
+
+        except Exception as e:
+            logger.error(f"Error handling callback: {e}")
+            await event.answer_callback_query(text="❌ An error occurred")
+
+    async def _refresh_rssdel_keyboard(
+        self, event: TelegramCallbackQueryEvent, session_id: str
+    ) -> None:
+        """Refresh the rssdel keyboard after deletion."""
+        session = KEYBOARD_SESSIONS.get(session_id)
+        if not session:
+            result = MessageEventResult()
+            result.message("❌ Session expired")
+            event.set_result(result)
+            return
+
+        umo = session["umo"]
+        all_subs = await self.db.get_all_subscriptions()
+
+        # Filter to show only user's subscribed feeds
+        user_subs = []
+        for sub in all_subs:
+            if sub.id is None:
+                continue
+            subscribers = await self.db.get_subscribers(sub.id)
+            if any(s.umo == umo for s in subscribers):
+                user_subs.append(sub)
+
+        if not user_subs:
+            result = MessageEventResult()
+            result.message("📭 You have no more subscriptions.")
+            event.set_result(result)
+            return
+
+        # Build keyboard buttons
+        buttons = []
+        for sub in user_subs:
+            buttons.append([
+                {
+                    "text": f"📰 {sub.name} (ID: {sub.id})",
+                    "callback_data": f"rssdel:{session_id}:{sub.id}",
+                }
+            ])
+
+        result = MessageEventResult()
+        result.message("🗑️ Select a subscription to unsubscribe:")
+        result.inline_keyboard(buttons)
+        event.set_result(result)

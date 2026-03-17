@@ -138,7 +138,7 @@
 
 ## 注意事项
 
-1. **Telegram Keyboard**: 由于 AstrBot 框架暂不支持 callback_query 处理，Telegram 内联键盘功能暂未实现
+1. **Telegram Keyboard**: 支持 Telegram 内联键盘，在 `/rssdel` 和 `/rssupdate` 命令中可通过键盘按钮交互操作
 2. **AI Provider**: 确保在配置中设置正确的 Provider ID，或在会话中配置默认 Provider
 3. **Persona**: 创建分组时会自动创建对应的 Persona，可在管理面板中修改
 4. **错误处理**: 订阅连续失败超过 `max_error_count` 次后会跳过抓取，直到手动触发或重置
