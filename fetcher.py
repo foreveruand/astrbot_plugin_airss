@@ -47,6 +47,12 @@ class RSSFetcher:
         """Build full RSSHub URL from path."""
         if not self.rsshub_url:
             return f"https://rsshub.app/{path.lstrip('/')}"
+        elif self.rsshub_key:
+            from urllib.parse import quote
+            import hashlib
+            encoded_router = quote(f"/{path.lstrip('/')}")
+            code = hashlib.md5(f"{encoded_router}{self.rsshub_key}".encode()).hexdigest()
+            return f"{self.rsshub_url}/{path.lstrip('/')}?code={code}"
         return urljoin(self.rsshub_url, path)
 
     async def fetch_feed(

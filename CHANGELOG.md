@@ -1,6 +1,9 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [1.1.1] - 2026-03-18
+### Fixed
+- 自建RSSHub未拼接Code参数到rsshub地址后
 
 ## [1.1.0] - 2025-03-17
 
