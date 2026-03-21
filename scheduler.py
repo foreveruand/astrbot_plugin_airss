@@ -421,6 +421,7 @@ class RSSScheduler:
         await self.context.cron_manager.add_basic_job(
             name=job_name,
             cron_expression=cron_expr,
+            timezone="Asia/Shanghai",
             handler=self._digest_handler,
             payload={"group_id": group.id, "schedule": time_str},
             description=f"RSS分组摘要推送: {group.name} @ {time_str}",
