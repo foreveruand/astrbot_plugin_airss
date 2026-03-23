@@ -256,25 +256,18 @@ class RSSCommands:
         self,
         event: AstrMessageEvent,
         subscription_id: int,
-        target_id: str,
-        adapter: str = TELEGRAM_ADAPTER,
-        is_group: bool = False,
+        umo: str,
     ) -> None:
-        """Add a subscriber to an existing subscription (admin only)."""
+        """Add a subscriber to an existing subscription (admin only).
+
+        Args:
+            umo: Unified Message Origin, e.g., "telegram:FriendMessage:xxxxx"
+        """
         # Check admin permission
         if not self._is_admin(event):
             event.set_result(
                 MessageEventResult().message(
                     "❌ This command requires admin privileges"
-                )
-            )
-            return
-
-        # Validate adapter
-        if adapter not in (TELEGRAM_ADAPTER, WECOM_ADAPTER, WEBHOOK_ADAPTER):
-            event.set_result(
-                MessageEventResult().message(
-                    f"❌ Unsupported adapter: {adapter}. Use telegram, wecom, or webhook"
                 )
             )
             return
@@ -289,15 +282,12 @@ class RSSCommands:
             )
             return
 
-        # Build UMO
-        umo = self._build_umo(target_id, adapter, is_group)
-
         # Check if already exists
         existing = await self.db.get_subscriber(subscription_id, umo)
         if existing:
             event.set_result(
                 MessageEventResult().message(
-                    f"❌ {target_id} is already subscribed to {subscription.name}"
+                    f"❌ This UMO is already subscribed to {subscription.name}"
                 )
             )
             return
@@ -309,14 +299,9 @@ class RSSCommands:
         # Refresh scheduler
         await self.scheduler.schedule_subscription_fetch(subscription)
 
-        adapter_type = (
-            "webhook"
-            if adapter == WEBHOOK_ADAPTER
-            else ("group" if is_group else "user")
-        )
         event.set_result(
             MessageEventResult().message(
-                f"✅ Added {adapter_type} {target_id} to subscription '{subscription.name}'"
+                f"✅ Added subscriber `{umo}` to subscription '{subscription.name}'"
             )
         )
 
@@ -960,26 +945,13 @@ class GroupCommands:
         self,
         event: AstrMessageEvent,
         group_id: int,
-        target_id: str,
-        adapter: str = TELEGRAM_ADAPTER,
-        is_group: bool = False,
+        umo: str,
     ) -> None:
         """Add a subscriber to a group.
 
         Args:
-            target_id: User/group ID or webhook URL
-            adapter: Adapter type (telegram, wecom, webhook)
-            is_group: Whether target is a group (ignored for webhooks)
+            umo: Unified Message Origin, e.g., "telegram:FriendMessage:xxxxx"
         """
-        # Validate adapter
-        if adapter not in (TELEGRAM_ADAPTER, WECOM_ADAPTER, WEBHOOK_ADAPTER):
-            event.set_result(
-                MessageEventResult().message(
-                    f"❌ Unsupported adapter: {adapter}. Use telegram, wecom, or webhook"
-                )
-            )
-            return
-
         group = await self.db.get_group(group_id)
         if not group:
             event.set_result(
@@ -996,14 +968,6 @@ class GroupCommands:
                 )
             )
             return
-
-        # Build UMO
-        # If target_id starts with http, it's a webhook URL
-        if target_id.startswith("http://") or target_id.startswith("https://"):
-            umo = target_id
-        else:
-            message_type = "GroupMessage" if is_group else "PrivateMessage"
-            umo = f"{adapter}:{message_type}:{target_id}"
 
         added_count = 0
         skipped_count = 0

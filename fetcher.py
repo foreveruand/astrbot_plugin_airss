@@ -192,6 +192,13 @@ class RSSFetcher:
                     except (TypeError, ValueError):
                         pass
 
+                # Get author
+                author = ""
+                if entry.get("author"):
+                    author = entry.author
+                elif entry.get("author_detail") and hasattr(entry.author_detail, "name"):
+                    author = entry.author_detail.name
+
                 # Get images from content
                 image_urls = self._extract_images(content)
 
@@ -200,6 +207,7 @@ class RSSFetcher:
                     content=content,
                     link=link,
                     guid=guid,
+                    author=author,
                     published_at=published_at,
                     fetched_at=datetime.now(timezone.utc),
                     image_urls=image_urls,

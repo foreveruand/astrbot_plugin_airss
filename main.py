@@ -112,7 +112,7 @@ class Main(star.Star):
             /rssadd <url> [name] - Add RSS subscription
             /rssadd -g <group_id> - Subscribe to entire group
             /rssadd -p <rsshub_path> - Print RSSHub URL only
-            /rssadd <subscription_id> <user/group_id> [adapter] [is_group] - Add subscriber (admin)
+            /rssadd <subscription_id> <umo> - Add subscriber (admin)
         """
         await self.initialize()
 
@@ -126,7 +126,7 @@ class Main(star.Star):
                     "  /rssadd <url> [name] - Add RSS subscription\n"
                     "  /rssadd -g <group_id> - Subscribe to entire group\n"
                     "  /rssadd -p <rsshub_path> - Print RSSHub URL only\n"
-                    "  /rssadd <sub_id> <user_id> [adapter] [is_group] - Add subscriber (admin)"
+                    "  /rssadd <sub_id> <umo> - Add subscriber (admin)"
                 )
             )
             return
@@ -171,17 +171,15 @@ class Main(star.Star):
             if len(parts) < 2:
                 event.set_result(
                     event.make_result().message(
-                        "Usage: /rssadd <subscription_id> <user/group_id> [adapter] [is_group]"
+                        "Usage: /rssadd <subscription_id> <umo>\n"
+                        "  umo: e.g., telegram:FriendMessage:xxxxx"
                     )
                 )
                 return
-            target_id = parts[1]
-            adapter = parts[2] if len(parts) > 2 else TELEGRAM_ADAPTER
-            is_group = (
-                parts[3].lower() in ("true", "1", "yes") if len(parts) > 3 else False
-            )
+            # Join remaining parts to handle UMO with colons
+            umo = " ".join(parts[1:])
             await self.rss_commands.rssadd_subscriber(
-                event, subscription_id, target_id, adapter, is_group
+                event, subscription_id, umo
             )
             return
         except ValueError:
@@ -446,22 +444,20 @@ class Main(star.Star):
     async def rssgroup_subadd(self, event: AstrMessageEvent) -> None:
         """Add a subscriber to a group.
 
-        Usage: rssgroup subadd <group_id> <target_id> [adapter] [is_group]
-        - target_id: User/group ID or webhook URL
-        - adapter: telegram (default), wecom, or webhook
-        - is_group: true/false (default false, ignored for webhooks)
+        Usage: rssgroup subadd <group_id> <umo>
+        - umo: Unified Message Origin, e.g., telegram:FriendMessage:xxxxx
         """
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("rssgroup subadd", "").strip().split()
+        args_text = message.replace("rssgroup subadd", "").strip()
+        parts = args_text.split(None, 1)  # Split into max 2 parts
 
         if len(parts) < 2:
             event.set_result(
                 event.make_result().message(
-                    "Usage: /rssgroup subadd <group_id> <target_id> [adapter] [is_group]\n"
-                    "  adapter: telegram (default), wecom, or webhook\n"
-                    "  is_group: true/false (default false, ignored for webhooks)"
+                    "Usage: /rssgroup subadd <group_id> <umo>\n"
+                    "  umo: e.g., telegram:FriendMessage:xxxxx"
                 )
             )
             return
@@ -472,12 +468,10 @@ class Main(star.Star):
             event.set_result(event.make_result().message("Group ID must be a number"))
             return
 
-        target_id = parts[1]
-        adapter = parts[2] if len(parts) > 2 else TELEGRAM_ADAPTER
-        is_group = parts[3].lower() in ("true", "1", "yes") if len(parts) > 3 else False
+        umo = parts[1].strip()
 
         await self.group_commands.group_subadd(
-            event, group_id, target_id, adapter, is_group
+            event, group_id, umo
         )
 
     @rssgroup.command("subdel")

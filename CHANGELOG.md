@@ -1,6 +1,26 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [1.2.0] - 2026-03-23
+
+### Added
+- Article author field support
+  - Added `author` field to `RSSArticle` model
+  - Database schema updated with `author` column in articles table
+  - Automatic migration for existing databases (backward compatible)
+  - Author information is now parsed from RSS feeds (supports `author` and `author_detail` fields)
+
+### Changed
+- RSS push message format updated
+  - Changed "Source" to "Via" showing article author instead of subscription name
+  - Falls back to empty if author is not available in the feed
+- Simplified subscriber management commands
+  - `/rssadd <subscription_id> <umo>` - Now accepts complete UMO format directly
+  - `/rssgroup subadd <group_id> <umo>` - Now accepts complete UMO format directly
+  - Removed `adapter` and `is_group` parameters (no longer needed with UMO format)
+  - UMO format example: `telegram:FriendMessage:xxxxx`, `wecom:GroupMessage:xxxxx`
+
 ## [1.1.1] - 2026-03-18
 ### Fixed
 - 自建RSSHub未拼接Code参数到rsshub地址后

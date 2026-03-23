@@ -50,9 +50,9 @@ class MessageFormatter:
         title = article.title or "Untitled"
         lines.append(f"**{title}**")
 
-        # Source
-        if subscription:
-            lines.append(f"Source: {subscription.name}")
+        # Via (author)
+        if article.author:
+            lines.append(f"Via: {article.author}")
 
         # Published time
         if article.published_at:

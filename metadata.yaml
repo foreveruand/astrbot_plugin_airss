@@ -2,5 +2,5 @@ name: astrbot_plugin_rss
 display_name: RSS订阅插件
 desc: RSS subscription plugin with AI digest support for AstrBot
 author: foreveruand
-version: 1.1.1
+version: 1.2.0
 repo: https://github.com/foreveruand/astrbot_plugin_rss

@@ -58,6 +58,7 @@ class Database:
                     content TEXT,
                     link TEXT,
                     guid TEXT,
+                    author TEXT DEFAULT '',
                     published_at TEXT,
                     fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     is_sent INTEGER DEFAULT 0,
@@ -96,12 +97,32 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_article_sent_subscriber ON article_sent(subscriber_id);
             """)
             await conn.commit()
+        
+        # Run migrations for existing databases
+        await self._migrate_db()
+        
         logger.info(f"RSS database initialized at {self.db_path}")
 
     @staticmethod
     def _hash_content(guid: str, link: str) -> str:
         """Generate hash for article deduplication."""
         return hashlib.md5(f"{guid}:{link}".encode()).hexdigest()
+
+    async def _migrate_db(self) -> None:
+        """Migrate database schema for compatibility with old versions."""
+        async with aiosqlite.connect(self.db_path) as conn:
+            # Check if articles table has author column
+            cursor = await conn.execute(
+                "SELECT name FROM pragma_table_info('articles') WHERE name = 'author'"
+            )
+            row = await cursor.fetchone()
+            if not row:
+                logger.info("Migrating database: adding author column to articles table")
+                await conn.execute(
+                    "ALTER TABLE articles ADD COLUMN author TEXT DEFAULT ''"
+                )
+                await conn.commit()
+                logger.info("Database migration completed: author column added")
 
     # ==================== Subscription Operations ====================
 
@@ -298,8 +319,8 @@ class Database:
                 cursor = await conn.execute(
                     """
                     INSERT INTO articles
-                    (subscription_id, title, content, link, guid, published_at, fetched_at, is_sent, image_urls, content_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (subscription_id, title, content, link, guid, author, published_at, fetched_at, is_sent, image_urls, content_hash)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         article.subscription_id,
@@ -307,6 +328,7 @@ class Database:
                         article.content,
                         article.link,
                         article.guid,
+                        article.author,
                         article.published_at.isoformat()
                         if article.published_at
                         else None,
@@ -353,6 +375,7 @@ class Database:
                     content=row["content"],
                     link=row["link"],
                     guid=row["guid"],
+                    author=row["author"] or "",
                     published_at=(
                         datetime.fromisoformat(row["published_at"])
                         if row["published_at"]
@@ -424,6 +447,7 @@ class Database:
                     content=row["content"],
                     link=row["link"],
                     guid=row["guid"],
+                    author=row["author"] or "",
                     published_at=(
                         datetime.fromisoformat(row["published_at"])
                         if row["published_at"]

@@ -63,6 +63,7 @@ class RSSArticle:
     content: str = ""
     link: str = ""
     guid: str = ""
+    author: str = ""  # Article author, empty if not available
     published_at: datetime | None = None
     fetched_at: datetime = field(default_factory=datetime.now)
     is_sent: bool = False
