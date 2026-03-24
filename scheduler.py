@@ -346,7 +346,8 @@ class RSSScheduler:
         from astrbot.core.message.message_event_result import MessageChain
 
         message_chain = MessageChain()
-        via_line = f"via [{subscription.name}]({article.link})"
+        via_name = article.author if article.author else subscription.name
+        via_line = f"via [{via_name}]({article.link})"
         if only_pic and article.image_urls:
             for img_url in article.image_urls:
                 self._add_image(message_chain, img_url, enable_spoiler)
@@ -388,7 +389,8 @@ class RSSScheduler:
         """Build text content for webhook (WeCom markdown format)."""
         title = article.title or "Untitled"
         link = article.link or ""
-        via_line = f"[{subscription.name}]({link})"
+        via_name = article.author if article.author else subscription.name
+        via_line = f"[{via_name}]({link})"
 
         if only_title:
             return f"📰 **{title}**\nvia {via_line}"
