@@ -2,6 +2,9 @@
 Scheduler service for RSS plugin using AstrBot's CronJobManager.
 """
 
+import asyncio
+import base64
+import hashlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -86,6 +89,63 @@ class RSSScheduler:
                         logger.warning(f"Webhook status: {resp.status}")
         except Exception as e:
             logger.error(f"Webhook send failed: {e}")
+
+        return False
+
+    async def _send_webhook_image(self, webhook_url: str, text: str, timeout: int = 30) -> bool:
+        """Render text as image via AstrBot t2i and send to WeCom webhook (image type).
+
+        Falls back to markdown if rendering fails or image exceeds 2 MB.
+        """
+        try:
+            from astrbot.core import html_renderer
+
+            global_config = self.context.get_config() or {}
+            template_name = global_config.get("t2i_active_template")
+
+            image_path: str = await html_renderer.render_t2i(
+                text,
+                return_url=False,
+                template_name=template_name,
+            )
+
+            image_bytes: bytes = await asyncio.to_thread(
+                lambda: open(image_path, "rb").read()
+            )
+
+            if len(image_bytes) > 2 * 1024 * 1024:
+                logger.warning(
+                    "t2i image exceeds WeCom 2 MB limit (%d bytes), "
+                    "falling back to markdown",
+                    len(image_bytes),
+                )
+                return await self._send_webhook(webhook_url, text, timeout)
+
+            b64_data = base64.b64encode(image_bytes).decode("utf-8")
+            md5_hash = hashlib.md5(image_bytes).hexdigest()
+
+            payload = {
+                "msgtype": "image",
+                "image": {"base64": b64_data, "md5": md5_hash},
+            }
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    webhook_url,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if result.get("errcode") == 0:
+                            return True
+                        logger.warning(f"Webhook image error: {result}")
+                    else:
+                        logger.warning(f"Webhook image status: {resp.status}")
+
+        except Exception as e:
+            logger.error(f"Webhook image send failed: {e}", exc_info=True)
+            return await self._send_webhook(webhook_url, text, timeout)
 
         return False
 
@@ -448,11 +508,21 @@ class RSSScheduler:
                 logger.info(f"No subscriptions in group {group_id}, skipping digest")
                 return
 
-            # Collect unsent articles from all subscriptions
+            # Collect unsent articles per-subscriber, deduplicated by article ID.
+            # Must use get_unsent_articles_for_subscriber (checks article_sent table)
+            # instead of get_unsent_articles (checks legacy is_sent column, never updated).
             all_articles: list[RSSArticle] = []
+            seen_article_ids: set[int] = set()
             for sub in subscriptions:
-                articles = await self.db.get_unsent_articles(sub.id)
-                all_articles.extend(articles)
+                sub_subscribers = await self.db.get_subscribers(sub.id)
+                for subscriber in sub_subscribers:
+                    unsent = await self.db.get_unsent_articles_for_subscriber(
+                        sub.id, subscriber.id
+                    )
+                    for article in unsent:
+                        if article.id not in seen_article_ids:
+                            all_articles.append(article)
+                            seen_article_ids.add(article.id)
 
             if not all_articles:
                 logger.info(f"No new articles for digest in group {group_id}")
@@ -513,8 +583,11 @@ class RSSScheduler:
                 )
                 continue
 
-            message_chain = MessageChain().message(digest_content)
-            success = await self._send_to_subscriber(umo, message_chain, digest_content)
+            if self._is_webhook(umo):
+                success = await self._send_webhook_image(umo, digest_content)
+            else:
+                message_chain = MessageChain().message(digest_content)
+                success = await self._send_to_subscriber(umo, message_chain)
 
             if success:
                 await self.db.mark_articles_sent_to_subscriber(

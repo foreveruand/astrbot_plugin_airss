@@ -411,14 +411,10 @@ class Database:
         if not article_ids:
             return
         async with aiosqlite.connect(self.db_path) as conn:
-            for article_id in article_ids:
-                await conn.execute(
-                    """
-                    INSERT OR IGNORE INTO article_sent (article_id, subscriber_id)
-                    VALUES (?, ?)
-                    """,
-                    (article_id, subscriber_id),
-                )
+            await conn.executemany(
+                "INSERT OR IGNORE INTO article_sent (article_id, subscriber_id) VALUES (?, ?)",
+                [(article_id, subscriber_id) for article_id in article_ids],
+            )
             await conn.commit()
 
     async def get_unsent_articles_for_subscriber(
@@ -721,6 +717,17 @@ class Database:
             Count of deleted articles.
         """
         async with aiosqlite.connect(self.db_path) as conn:
+            # First clean up orphaned article_sent rows for articles that will be deleted
+            await conn.execute(
+                """
+                DELETE FROM article_sent
+                WHERE article_id IN (
+                    SELECT id FROM articles
+                    WHERE datetime(fetched_at) < datetime('now', ? || ' days')
+                )
+                """,
+                (f"-{retention_days}",),
+            )
             cursor = await conn.execute(
                 """
                 DELETE FROM articles
