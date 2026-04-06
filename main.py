@@ -45,7 +45,7 @@ class Main(star.Star):
         logger.info("RSS plugin initialized successfully")
 
     async def _init(self) -> None:
-        data_path = Path(get_astrbot_data_path()) / "plugin_data" / "astrbot_plugin_rss"
+        data_path = Path(get_astrbot_data_path()) / "plugin_data" / "astrbot_plugin_airss"
         data_path.mkdir(parents=True, exist_ok=True)
         db_path = data_path / "rss.db"
 
