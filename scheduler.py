@@ -5,7 +5,10 @@ Scheduler service for RSS plugin using AstrBot's CronJobManager.
 import asyncio
 import base64
 import hashlib
+import json
 import logging
+import os
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import aiohttp
@@ -92,22 +95,54 @@ class RSSScheduler:
 
         return False
 
-    async def _send_webhook_image(self, webhook_url: str, text: str, timeout: int = 30) -> bool:
-        """Render text as image via AstrBot t2i and send to WeCom webhook (image type).
+    def _load_digest_template(self) -> str:
+        """Load the digest Jinja2 HTML template from the plugin directory."""
+        tmpl_path = os.path.join(os.path.dirname(__file__), "digest_template.jinja2")
+        with open(tmpl_path, "r", encoding="utf-8") as f:
+            return f.read()
 
-        Falls back to markdown if rendering fails or image exceeds 2 MB.
+    def _make_template_data(self, text: str) -> dict:
+        """Build template variables for the digest template.
+
+        Content is JSON-encoded so arbitrary markdown text (backticks, quotes, etc.)
+        embeds safely inside the HTML/JS without escaping issues.
+        """
+        return {
+            "content_json": json.dumps(text),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        }
+
+    async def _render_digest_image(self, text: str, return_url: bool = False) -> str:
+        """Render digest markdown to an image using the custom template.
+
+        Args:
+            text: Markdown digest text.
+            return_url: If True, returns a remote URL; if False, returns a local file path.
+
+        Returns:
+            URL or file path of the rendered image.
+
+        Raises:
+            Exception: Propagates rendering errors so callers can fall back.
+        """
+        from astrbot.core import html_renderer
+
+        tmpl_str = self._load_digest_template()
+        tmpl_data = self._make_template_data(text)
+        return await html_renderer.render_custom_template(
+            tmpl_str,
+            tmpl_data,
+            return_url=return_url,
+            options={"full_page": True, "type": "jpeg", "quality": 70},
+        )
+
+    async def _send_webhook_image(self, webhook_url: str, text: str, timeout: int = 30) -> bool:
+        """Render digest as image using the custom template and send to WeCom webhook.
+
+        Falls back to markdown if rendering fails or the resulting JPEG exceeds 2 MB.
         """
         try:
-            from astrbot.core import html_renderer
-
-            global_config = self.context.get_config() or {}
-            template_name = global_config.get("t2i_active_template")
-
-            image_path: str = await html_renderer.render_t2i(
-                text,
-                return_url=False,
-                template_name=template_name,
-            )
+            image_path: str = await self._render_digest_image(text, return_url=False)
 
             image_bytes: bytes = await asyncio.to_thread(
                 lambda: open(image_path, "rb").read()
@@ -574,6 +609,9 @@ class RSSScheduler:
 
         article_ids = [a.id for a in articles if a.id]
 
+        t2i_webhook = self.config.get("t2i_webhook_enabled", False)
+        t2i_platform = self.config.get("t2i_platform_enabled", False)
+
         # Send to each subscriber
         for umo, subscriber in umo_to_subscriber.items():
             if subscriber.personal_config.get("stop", False):
@@ -584,10 +622,25 @@ class RSSScheduler:
                 continue
 
             if self._is_webhook(umo):
-                success = await self._send_webhook_image(umo, digest_content)
+                if t2i_webhook:
+                    success = await self._send_webhook_image(umo, digest_content)
+                else:
+                    success = await self._send_webhook(umo, digest_content)
             else:
-                message_chain = MessageChain().message(digest_content)
-                success = await self._send_to_subscriber(umo, message_chain)
+                if t2i_platform:
+                    try:
+                        image_url = await self._render_digest_image(digest_content, return_url=True)
+                        message_chain = MessageChain().url_image(image_url)
+                        success = await self._send_to_subscriber(umo, message_chain)
+                    except Exception as e:
+                        logger.warning(
+                            f"Platform t2i render failed for {umo}: {e}, falling back to text"
+                        )
+                        message_chain = MessageChain().message(digest_content)
+                        success = await self._send_to_subscriber(umo, message_chain)
+                else:
+                    message_chain = MessageChain().message(digest_content)
+                    success = await self._send_to_subscriber(umo, message_chain)
 
             if success:
                 await self.db.mark_articles_sent_to_subscriber(

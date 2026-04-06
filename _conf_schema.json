@@ -118,5 +118,15 @@
     "description": "文章保留天数，过期自动清理",
     "min": 1,
     "max": 365
+  },
+  "t2i_webhook_enabled": {
+    "type": "bool",
+    "default": false,
+    "description": "Webhook 摘要启用图片渲染（将 AI 摘要文字转为图片后发送至企业微信等 Webhook）"
+  },
+  "t2i_platform_enabled": {
+    "type": "bool",
+    "default": false,
+    "description": "平台消息摘要启用图片渲染（Telegram、WeCom 等通道，摘要转图片后发送）"
   }
 }

@@ -1,0 +1,200 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0c0e1a;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                   "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans CN",
+                   "WenQuanYi Micro Hei", system-ui, sans-serif;
+      padding: 20px;
+      width: 800px;
+    }
+
+    .card {
+      background: #13162a;
+      border: 1px solid #232640;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #0b2618 0%, #081c12 60%, #0a1e28 100%);
+      border-bottom: 2px solid #1a5c36;
+      padding: 16px 22px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .header-icon { font-size: 22px; line-height: 1; }
+    .header-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #2ecc71;
+      letter-spacing: 0.4px;
+      flex: 1;
+    }
+    .header-time {
+      font-size: 11px;
+      color: #4a5568;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Article content ── */
+    #content {
+      padding: 18px 22px 14px;
+    }
+
+    /* h1 = overview/forecast section (📈 市场趋势...) */
+    #content h1 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f6c90e;
+      margin: 0 0 10px 0;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #2a2e45;
+      line-height: 1.5;
+    }
+
+    /* h2 = per-topic sections (📊 A股走势 etc.) */
+    #content h2 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #4fc3f7;
+      margin: 20px 0 8px 0;
+      padding: 5px 10px;
+      background: rgba(79, 195, 247, 0.07);
+      border-left: 3px solid #4fc3f7;
+      border-radius: 0 4px 4px 0;
+      line-height: 1.5;
+    }
+    #content h2:first-child { margin-top: 0; }
+
+    /* Body paragraphs */
+    #content p {
+      font-size: 13px;
+      line-height: 1.9;
+      color: #b8c2cf;
+      margin-bottom: 10px;
+    }
+
+    /* Inline links (article titles) */
+    #content a {
+      color: #58b9f0;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(88, 185, 240, 0.35);
+    }
+
+    /* Supporting evidence bullet list */
+    #content ul {
+      list-style: none;
+      margin: 10px 0 8px;
+      padding: 8px 0 0;
+      border-top: 1px solid #1e2238;
+    }
+    #content ul li {
+      font-size: 12px;
+      color: #6b7a92;
+      line-height: 1.75;
+      padding: 2px 0 2px 16px;
+      position: relative;
+    }
+    #content ul li::before {
+      content: '▸';
+      position: absolute;
+      left: 0;
+      color: #2d6648;
+      font-size: 11px;
+    }
+    #content ul li a {
+      color: #5b8fa8;
+      border-bottom-color: rgba(91, 143, 168, 0.3);
+    }
+
+    #content strong { color: #dde3ec; }
+    #content em { color: #a0aab8; font-style: italic; }
+
+    #content blockquote {
+      border-left: 3px solid #2a3650;
+      padding-left: 12px;
+      color: #7a8699;
+      margin: 8px 0;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      text-align: center;
+      padding: 8px 22px;
+      font-size: 10px;
+      color: #282c42;
+      border-top: 1px solid #1a1d30;
+      letter-spacing: 0.5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <span class="header-icon">📊</span>
+      <span class="header-title">AI 市场资讯摘要</span>
+      <span class="header-time">{{ timestamp | safe }}</span>
+    </div>
+    <div id="content"></div>
+    <div class="footer">AI GENERATED &nbsp;·&nbsp; AstrBot RSS Plugin</div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+  <script>
+    // Emoji code-point ranges (covers most common emojis used as section markers)
+    function startsWithEmoji(str) {
+      if (!str) return false;
+      var cp = str.codePointAt(0);
+      return (
+        (cp >= 0x1F300 && cp <= 0x1FAFF) ||  // Misc Symbols & Pictographs, Emoticons, etc.
+        (cp >= 0x2600  && cp <= 0x27BF)  ||  // Misc Symbols, Dingbats
+        (cp >= 0x231A  && cp <= 0x2B55)  ||  // Misc technical / arrows
+        (cp >= 0x1F000 && cp <= 0x1F02F)      // Mahjong / domino tiles (rare, safety)
+      );
+    }
+
+    function preprocessContent(raw) {
+      var lines = raw.split('\n');
+      var result = [];
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var trimmed = line.trim();
+
+        // ⦁ bullet → markdown list item
+        if (/^⦁\s/.test(line)) {
+          result.push('- ' + line.replace(/^⦁\s+/, ''));
+          continue;
+        }
+
+        // Short emoji-led lines → section headers
+        // First line of digest (📈 overview) → h1; subsequent → h2
+        if (trimmed.length > 0 && trimmed.length < 80 && startsWithEmoji(trimmed) && trimmed.indexOf('](') === -1) {
+          var level = (result.length === 0 || result.every(function(l) { return l.trim() === ''; })) ? '# ' : '## ';
+          result.push(level + trimmed);
+          continue;
+        }
+
+        result.push(line);
+      }
+      return result.join('\n');
+    }
+
+    // Content is JSON-encoded in Python to safely embed arbitrary text
+    var rawContent = JSON.parse({{ content_json | safe }});
+    var processed  = preprocessContent(rawContent);
+
+    marked.use({ gfm: true, breaks: true });
+    document.getElementById('content').innerHTML = marked.parse(processed);
+  </script>
+</body>
+</html>
