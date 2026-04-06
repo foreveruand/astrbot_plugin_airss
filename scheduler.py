@@ -136,7 +136,9 @@ class RSSScheduler:
             options={"full_page": True, "type": "jpeg", "quality": 70},
         )
 
-    async def _send_webhook_image(self, webhook_url: str, text: str, timeout: int = 30) -> bool:
+    async def _send_webhook_image(
+        self, webhook_url: str, text: str, timeout: int = 30
+    ) -> bool:
         """Render digest as image using the custom template and send to WeCom webhook.
 
         Falls back to markdown if rendering fails or the resulting JPEG exceeds 2 MB.
@@ -291,8 +293,23 @@ class RSSScheduler:
             if subscription.error_count >= max_error_count:
                 logger.warning(
                     f"Subscription {subscription_id} ({subscription.name}) exceeded max errors "
-                    f"({subscription.error_count}/{max_error_count}), skipping fetch"
+                    f"({subscription.error_count}/{max_error_count}), stopping subscription"
                 )
+
+                subscription.stop = True
+                await self.db.update_subscription(subscription)
+
+                subscribers = await self.db.get_subscribers(subscription.id)
+                for subscriber in subscribers:
+                    if subscriber.personal_config.get("stop", False):
+                        continue
+
+                    message = MessageChain().message(
+                        f"⚠️ 订阅 **{subscription.name}** 已因连续 {max_error_count} 次抓取失败而停止。\n"
+                        f"请检查订阅源是否正常，或使用 `/rsstrigger {subscription.id}` 手动触发恢复。"
+                    )
+                    await self._send_to_subscriber(subscriber.umo, message)
+
                 return
 
             result = await self.fetcher.fetch_feed(
@@ -629,7 +646,9 @@ class RSSScheduler:
             else:
                 if t2i_platform:
                     try:
-                        image_url = await self._render_digest_image(digest_content, return_url=True)
+                        image_url = await self._render_digest_image(
+                            digest_content, return_url=True
+                        )
                         message_chain = MessageChain().url_image(image_url)
                         success = await self._send_to_subscriber(umo, message_chain)
                     except Exception as e:

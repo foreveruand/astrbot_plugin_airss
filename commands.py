@@ -445,12 +445,32 @@ class RSSCommands:
                 continue
             subscribers = await self.db.get_subscribers(sub.id)
             is_subscribed = any(s.umo == umo for s in subscribers)
-            status = "✅" if is_subscribed else "⚪"
 
-            lines.append(f"{status} **[{sub.name}]({sub.url})** (ID: {sub.id})")
-            lines.append(
+            global_stop_indicator = "⏸️" if sub.stop else "▶️"
+
+            user_subscriber = next((s for s in subscribers if s.umo == umo), None)
+            personal_stop = (
+                user_subscriber.personal_config.get("stop", False)
+                if user_subscriber
+                else False
+            )
+            personal_stop_indicator = "⏸️" if personal_stop else ""
+
+            subscribed_indicator = "✅" if is_subscribed else "⚪"
+
+            # Fix: Separate bold from link to avoid Telegram markdown parsing issues
+            status_line = f"{global_stop_indicator}{personal_stop_indicator}{subscribed_indicator} **{sub.name}** - [{sub.url}]({sub.url}) (ID: {sub.id})"
+            lines.append(status_line)
+
+            info_line = (
                 f"   Interval: {sub.interval} min, Subscribers: {len(subscribers)}"
             )
+            if sub.error_count > 0:
+                info_line += f", Errors: {sub.error_count}"
+            if sub.stop:
+                info_line += " [PAUSED]"
+
+            lines.append(info_line)
             lines.append("")
 
         event.set_result(MessageEventResult().message("\n".join(lines)))
@@ -504,7 +524,7 @@ class RSSCommands:
             # Show current config with descriptions
             config = subscriber.personal_config or {}
             lines = [
-                f"⚙️ **[{subscription.name}]({subscription.url})** 配置\n",
+                f"⚙️ **{subscription.name}** - [{subscription.url}]({subscription.url}) 配置\n",
                 "| 参数 | 当前值 | 说明 |",
                 "|------|--------|------|",
             ]
@@ -615,7 +635,7 @@ class RSSCommands:
 
         if not config_key:
             lines = [
-                f"⚙️ **[{subscription.name}]({subscription.url})** 配置\n",
+                f"⚙️ **{subscription.name}** - [{subscription.url}]({subscription.url}) 配置\n",
                 "| 参数 | 当前值 | 说明 |",
                 "|------|--------|------|",
             ]
@@ -766,7 +786,11 @@ class RSSCommands:
                 )
                 return
 
-            # Trigger fetch
+            if subscription.stop:
+                subscription.stop = False
+                subscription.error_count = 0
+                await self.db.update_subscription(subscription)
+
             await self.scheduler._fetch_subscription_handler(subscription.id)
             event.set_result(
                 MessageEventResult().message(

@@ -45,7 +45,9 @@ class Main(star.Star):
         logger.info("RSS plugin initialized successfully")
 
     async def _init(self) -> None:
-        data_path = Path(get_astrbot_data_path()) / "plugin_data" / "astrbot_plugin_airss"
+        data_path = (
+            Path(get_astrbot_data_path()) / "plugin_data" / "astrbot_plugin_airss"
+        )
         data_path.mkdir(parents=True, exist_ok=True)
         db_path = data_path / "rss.db"
 
@@ -178,9 +180,7 @@ class Main(star.Star):
                 return
             # Join remaining parts to handle UMO with colons
             umo = " ".join(parts[1:])
-            await self.rss_commands.rssadd_subscriber(
-                event, subscription_id, umo
-            )
+            await self.rss_commands.rssadd_subscriber(event, subscription_id, umo)
             return
         except ValueError:
             pass  # Not an ID, continue with normal flow
@@ -470,9 +470,7 @@ class Main(star.Star):
 
         umo = parts[1].strip()
 
-        await self.group_commands.group_subadd(
-            event, group_id, umo
-        )
+        await self.group_commands.group_subadd(event, group_id, umo)
 
     @rssgroup.command("subdel")
     async def rssgroup_subdel(self, event: AstrMessageEvent) -> None:
@@ -537,12 +535,14 @@ class Main(star.Star):
         # Build keyboard buttons
         buttons = []
         for sub in user_subs:
-            buttons.append([
-                {
-                    "text": f"📰 {sub.name} (ID: {sub.id})",
-                    "callback_data": f"rssdel:{session_id}:{sub.id}",
-                }
-            ])
+            buttons.append(
+                [
+                    {
+                        "text": f"📰 {sub.name} (ID: {sub.id})",
+                        "callback_data": f"rssdel:{session_id}:{sub.id}",
+                    }
+                ]
+            )
 
         result = MessageEventResult()
         result.message("🗑️ Select a subscription to unsubscribe:")
@@ -592,12 +592,14 @@ class Main(star.Star):
         # Build keyboard buttons
         buttons = []
         for sub in user_subs:
-            buttons.append([
-                {
-                    "text": f"📰 {sub.name} (ID: {sub.id})",
-                    "callback_data": f"rssconfig:{session_id}:{sub.id}:{user_id}",
-                }
-            ])
+            buttons.append(
+                [
+                    {
+                        "text": f"📰 {sub.name} (ID: {sub.id})",
+                        "callback_data": f"rssconfig:{session_id}:{sub.id}:{user_id}",
+                    }
+                ]
+            )
 
         result = MessageEventResult()
         result.message("⚙️ Select a subscription to configure:")
@@ -630,7 +632,11 @@ class Main(star.Star):
 
         # Build config buttons with toggle status
         config_layout = [
-            [("only_title", "仅标题", "📄"), ("only_pic", "仅图片", "🖼️"), ("only_has_pic", "有图片才发", "📸")],
+            [
+                ("only_title", "仅标题", "📄"),
+                ("only_pic", "仅图片", "🖼️"),
+                ("only_has_pic", "有图片才发", "📸"),
+            ],
             [("enable_spoiler", "图片遮挡", "👁️"), ("stop", "暂停订阅", "⏸️")],
         ]
 
@@ -642,22 +648,28 @@ class Main(star.Star):
                 current_value = config.get(key, False)
                 status = "✅" if current_value else "⭕"
                 button_text = f"{emoji} {text} {status}"
-                row_buttons.append({
-                    "text": button_text,
-                    "callback_data": f"toggle:{session_id}:{sub_id}:{user_id}:{key}",
-                })
+                row_buttons.append(
+                    {
+                        "text": button_text,
+                        "callback_data": f"toggle:{session_id}:{sub_id}:{user_id}:{key}",
+                    }
+                )
             buttons.append(row_buttons)
 
         # Add back button
-        buttons.append([
-            {
-                "text": "⬅️ 返回列表",
-                "callback_data": f"rsslist:{session_id}:{user_id}",
-            }
-        ])
+        buttons.append(
+            [
+                {
+                    "text": "⬅️ 返回列表",
+                    "callback_data": f"rsslist:{session_id}:{user_id}",
+                }
+            ]
+        )
 
         result = MessageEventResult()
-        result.message(f"⚙️ **[{subscription.name}]({subscription.url})** 配置\n\n点击按钮切换开关状态:")
+        result.message(
+            f"⚙️ **{subscription.name}** - [{subscription.url}]({subscription.url}) 配置\n\n点击按钮切换开关状态:"
+        )
         result.inline_keyboard(buttons)
         event.set_result(result)
 
@@ -669,7 +681,9 @@ class Main(star.Star):
 
         # Check admin permission
         if event.role not in ("admin", "superuser"):
-            result = MessageEventResult().message("❌ This command requires admin privileges")
+            result = MessageEventResult().message(
+                "❌ This command requires admin privileges"
+            )
             event.set_result(result)
             return
 
@@ -692,12 +706,14 @@ class Main(star.Star):
             if sub.id is None:
                 continue
             subscribers = await self.db.get_subscribers(sub.id)
-            buttons.append([
-                {
-                    "text": f"📰 {sub.name} (ID: {sub.id}) [{len(subscribers)} 订阅者]",
-                    "callback_data": f"globalconfig:{session_id}:{sub.id}",
-                }
-            ])
+            buttons.append(
+                [
+                    {
+                        "text": f"📰 {sub.name} (ID: {sub.id}) [{len(subscribers)} 订阅者]",
+                        "callback_data": f"globalconfig:{session_id}:{sub.id}",
+                    }
+                ]
+            )
 
         result = MessageEventResult()
         result.message("🔧 **全局配置** - 选择订阅进行配置:")
@@ -732,23 +748,27 @@ class Main(star.Star):
                 current_value = getattr(subscription, key, False)
                 status = "✅" if current_value else "⭕"
                 button_text = f"{emoji} {text} {status}"
-                row_buttons.append({
-                    "text": button_text,
-                    "callback_data": f"globaltoggle:{sub_id}:{key}",
-                })
+                row_buttons.append(
+                    {
+                        "text": button_text,
+                        "callback_data": f"globaltoggle:{sub_id}:{key}",
+                    }
+                )
             buttons.append(row_buttons)
 
         # Add back button
-        buttons.append([
-            {
-                "text": "⬅️ 返回列表",
-                "callback_data": "globallist:0:nop",
-            }
-        ])
+        buttons.append(
+            [
+                {
+                    "text": "⬅️ 返回列表",
+                    "callback_data": "globallist:0:nop",
+                }
+            ]
+        )
 
         result = MessageEventResult()
         result.message(
-            f"🔧 **[{subscription.name}]({subscription.url})** 全局配置\n\n"
+            f"🔧 **{subscription.name}** - [{subscription.url}]({subscription.url}) 全局配置\n\n"
             f"间隔: {subscription.interval} 分钟\n\n"
             f"点击按钮切换开关状态:"
         )
@@ -850,9 +870,7 @@ class Main(star.Star):
                 # Show toast
                 new_value = subscriber.personal_config[config_key]
                 status_text = "enabled" if new_value else "disabled"
-                await event.answer_callback_query(
-                    text=f"✅ {config_key} {status_text}"
-                )
+                await event.answer_callback_query(text=f"✅ {config_key} {status_text}")
 
                 # Refresh config keyboard
                 await self._show_config_keyboard(event, session_id, sub_id, user_id)
@@ -892,9 +910,7 @@ class Main(star.Star):
                 # Show toast
                 new_value = getattr(subscription, config_key, False)
                 status_text = "已开启" if new_value else "已关闭"
-                await event.answer_callback_query(
-                    text=f"✅ {config_key} {status_text}"
-                )
+                await event.answer_callback_query(text=f"✅ {config_key} {status_text}")
 
                 # Refresh config keyboard
                 await self._show_global_config_keyboard(event, sub_id)
@@ -941,12 +957,14 @@ class Main(star.Star):
         # Build keyboard buttons
         buttons = []
         for sub in user_subs:
-            buttons.append([
-                {
-                    "text": f"📰 {sub.name} (ID: {sub.id})",
-                    "callback_data": f"rssdel:{session_id}:{sub.id}",
-                }
-            ])
+            buttons.append(
+                [
+                    {
+                        "text": f"📰 {sub.name} (ID: {sub.id})",
+                        "callback_data": f"rssdel:{session_id}:{sub.id}",
+                    }
+                ]
+            )
 
         result = MessageEventResult()
         result.message("🗑️ Select a subscription to unsubscribe:")
