@@ -287,6 +287,12 @@ class RSSScheduler:
                 )
                 return
 
+            if subscription.stop:
+                logger.debug(
+                    f"Subscription {subscription_id} ({subscription.name}) is stopped, skipping fetch"
+                )
+                return
+
             config = self.context.get_config() or {}
             max_error_count = config.get("max_error_count", 100)
 
