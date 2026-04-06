@@ -133,8 +133,9 @@ def get_effective_bool(
     subscriber: Subscriber, key: str, subscription: RSSSubscription
 ) -> bool:
     """Get effective bool value from subscriber config or subscription default."""
-    if key in subscriber.personal_config:
-        return bool(subscriber.personal_config[key])
+    config = subscriber.personal_config or {}
+    if key in config:
+        return bool(config[key])
     return bool(getattr(subscription, key, False))
 
 
@@ -142,6 +143,7 @@ def get_effective_text(
     subscriber: Subscriber, key: str, subscription: RSSSubscription
 ) -> str:
     """Get effective text value from subscriber config or subscription default."""
-    if key in subscriber.personal_config:
-        return str(subscriber.personal_config[key])
+    config = subscriber.personal_config or {}
+    if key in config:
+        return str(config[key])
     return str(getattr(subscription, key, ""))

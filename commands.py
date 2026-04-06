@@ -450,7 +450,7 @@ class RSSCommands:
 
             user_subscriber = next((s for s in subscribers if s.umo == umo), None)
             personal_stop = (
-                user_subscriber.personal_config.get("stop", False)
+                (user_subscriber.personal_config or {}).get("stop", False)
                 if user_subscriber
                 else False
             )
@@ -754,7 +754,11 @@ class RSSCommands:
                     else:
                         adapter_emoji = "❓"
 
-                status = "⏸️ Paused" if sub.personal_config.get("stop") else "✅ Active"
+                status = (
+                    "⏸️ Paused"
+                    if (sub.personal_config or {}).get("stop", False)
+                    else "✅ Active"
+                )
                 lines.append(
                     f"  {adapter_emoji} `{session_id}` ({adapter_name}) - {status}"
                 )

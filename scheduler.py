@@ -301,7 +301,7 @@ class RSSScheduler:
 
                 subscribers = await self.db.get_subscribers(subscription.id)
                 for subscriber in subscribers:
-                    if subscriber.personal_config.get("stop", False):
+                    if (subscriber.personal_config or {}).get("stop", False):
                         continue
 
                     message = MessageChain().message(
@@ -370,7 +370,7 @@ class RSSScheduler:
             return
 
         for subscriber in subscribers:
-            if subscriber.personal_config.get("stop", False):
+            if (subscriber.personal_config or {}).get("stop", False):
                 continue
 
             articles = await self.db.get_unsent_articles_for_subscriber(
@@ -631,7 +631,7 @@ class RSSScheduler:
 
         # Send to each subscriber
         for umo, subscriber in umo_to_subscriber.items():
-            if subscriber.personal_config.get("stop", False):
+            if (subscriber.personal_config or {}).get("stop", False):
                 # Still mark as sent even if stopped
                 await self.db.mark_articles_sent_to_subscriber(
                     subscriber.id, article_ids
