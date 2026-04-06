@@ -445,7 +445,7 @@ class RSSCommands:
                 continue
             subscribers = await self.db.get_subscribers(sub.id)
             is_subscribed = any(s.umo == umo for s in subscribers)
-
+            
             global_stop_indicator = "⏸️" if sub.stop else "▶️"
 
             user_subscriber = next((s for s in subscribers if s.umo == umo), None)
@@ -458,8 +458,8 @@ class RSSCommands:
 
             subscribed_indicator = "✅" if is_subscribed else "⚪"
 
-            # Fix: Separate bold from link to avoid Telegram markdown parsing issues
-            status_line = f"{global_stop_indicator}{personal_stop_indicator}{subscribed_indicator} **{sub.name}** - [{sub.url}]({sub.url}) (ID: {sub.id})"
+            status = "✅" if is_subscribed else "⚪"
+            status_line = f"{global_stop_indicator}{personal_stop_indicator}{subscribed_indicator} **[{sub.name}]({sub.url})** (ID: {sub.id})"
             lines.append(status_line)
 
             info_line = (
@@ -469,11 +469,15 @@ class RSSCommands:
                 info_line += f", Errors: {sub.error_count}"
             if sub.stop:
                 info_line += " [PAUSED]"
-
             lines.append(info_line)
+            # lines.append(f"{status} **[{sub.name}]({sub.url})** (ID: {sub.id})")
+            # lines.append(
+            #     f"   Interval: {sub.interval} min, Subscribers: {len(subscribers)}"
+            # )
             lines.append("")
 
         event.set_result(MessageEventResult().message("\n".join(lines)))
+
 
     async def rssupdate(
         self,
