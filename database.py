@@ -599,7 +599,9 @@ class Database:
                     id=row["id"],
                     subscription_id=row["subscription_id"],
                     umo=row["umo"],
-                    personal_config=json.loads(row["personal_config"]),
+                    personal_config=json.loads(row["personal_config"])
+                    if row["personal_config"] is not None
+                    else {},
                 )
                 for row in rows
             ]
@@ -620,7 +622,9 @@ class Database:
                     id=row["id"],
                     subscription_id=row["subscription_id"],
                     umo=row["umo"],
-                    personal_config=json.loads(row["personal_config"]),
+                    personal_config=json.loads(row["personal_config"])
+                    if row["personal_config"] is not None
+                    else {},
                 )
             return None
 
