@@ -97,10 +97,10 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_article_sent_subscriber ON article_sent(subscriber_id);
             """)
             await conn.commit()
-        
+
         # Run migrations for existing databases
         await self._migrate_db()
-        
+
         logger.info(f"RSS database initialized at {self.db_path}")
 
     @staticmethod
@@ -117,7 +117,9 @@ class Database:
             )
             row = await cursor.fetchone()
             if not row:
-                logger.info("Migrating database: adding author column to articles table")
+                logger.info(
+                    "Migrating database: adding author column to articles table"
+                )
                 await conn.execute(
                     "ALTER TABLE articles ADD COLUMN author TEXT DEFAULT ''"
                 )
@@ -179,8 +181,10 @@ class Database:
                         else True
                     ),
                     enable_proxy=bool(row["enable_proxy"]),
-                    stop=bool(row["stop"]),
-                    error_count=row["error_count"],
+                    stop=bool(row["stop"]) if row["stop"] is not None else False,
+                    error_count=row["error_count"]
+                    if row["error_count"] is not None
+                    else 0,
                     last_fetch=(
                         datetime.fromisoformat(row["last_fetch"])
                         if row["last_fetch"]
@@ -216,8 +220,10 @@ class Database:
                         else True
                     ),
                     enable_proxy=bool(row["enable_proxy"]),
-                    stop=bool(row["stop"]),
-                    error_count=row["error_count"],
+                    stop=bool(row["stop"]) if row["stop"] is not None else False,
+                    error_count=row["error_count"]
+                    if row["error_count"] is not None
+                    else 0,
                     last_fetch=(
                         datetime.fromisoformat(row["last_fetch"])
                         if row["last_fetch"]
@@ -251,8 +257,10 @@ class Database:
                         else True
                     ),
                     enable_proxy=bool(row["enable_proxy"]),
-                    stop=bool(row["stop"]),
-                    error_count=row["error_count"],
+                    stop=bool(row["stop"]) if row["stop"] is not None else False,
+                    error_count=row["error_count"]
+                    if row["error_count"] is not None
+                    else 0,
                     last_fetch=(
                         datetime.fromisoformat(row["last_fetch"])
                         if row["last_fetch"]
@@ -661,8 +669,10 @@ class Database:
                         else True
                     ),
                     enable_proxy=bool(row["enable_proxy"]),
-                    stop=bool(row["stop"]),
-                    error_count=row["error_count"],
+                    stop=bool(row["stop"]) if row["stop"] is not None else False,
+                    error_count=row["error_count"]
+                    if row["error_count"] is not None
+                    else 0,
                     last_fetch=(
                         datetime.fromisoformat(row["last_fetch"])
                         if row["last_fetch"]
