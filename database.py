@@ -126,6 +126,36 @@ class Database:
                 await conn.commit()
                 logger.info("Database migration completed: author column added")
 
+            # Check if subscriptions table has stop column
+            cursor = await conn.execute(
+                "SELECT name FROM pragma_table_info('subscriptions') WHERE name = 'stop'"
+            )
+            row = await cursor.fetchone()
+            if not row:
+                logger.info(
+                    "Migrating database: adding stop column to subscriptions table"
+                )
+                await conn.execute(
+                    "ALTER TABLE subscriptions ADD COLUMN stop INTEGER DEFAULT 0"
+                )
+                await conn.commit()
+                logger.info("Database migration completed: stop column added")
+
+            # Check if subscriptions table has error_count column
+            cursor = await conn.execute(
+                "SELECT name FROM pragma_table_info('subscriptions') WHERE name = 'error_count'"
+            )
+            row = await cursor.fetchone()
+            if not row:
+                logger.info(
+                    "Migrating database: adding error_count column to subscriptions table"
+                )
+                await conn.execute(
+                    "ALTER TABLE subscriptions ADD COLUMN error_count INTEGER DEFAULT 0"
+                )
+                await conn.commit()
+                logger.info("Database migration completed: error_count column added")
+
     # ==================== Subscription Operations ====================
 
     async def add_subscription(self, sub: RSSSubscription) -> int:
