@@ -46,13 +46,15 @@ class DigestService:
         return self.FALLBACK_PROMPT
 
     def _get_ai_provider(self) -> str | None:
-        provider_id = self.config.get("ai_provider", "")
+        ai_config = self.config.get("ai_config", {})
+        provider_id = ai_config.get("ai_provider", "")
         return provider_id if provider_id else None
 
     def _get_fallback_providers(self) -> list[str]:
         """Get fallback provider IDs from config, excluding primary provider."""
         primary_provider = self._get_ai_provider()
-        fallback_ids = self.config.get("ai_fallback_providers", [])
+        ai_config = self.config.get("ai_config", {})
+        fallback_ids = ai_config.get("ai_fallback_providers", [])
 
         if not isinstance(fallback_ids, list):
             logger.warning("ai_fallback_providers is not a list, skipping fallbacks")
@@ -98,11 +100,12 @@ class DigestService:
         if not articles:
             return "暂无新文章。"
 
-        max_articles = self.config.get("ai_digest_max_articles", 50)
-        max_input_tokens = self.config.get("ai_digest_max_input_tokens", 131072)
-        max_output_tokens = self.config.get("ai_digest_max_output_tokens", 8192)
-        title_max_len = self.config.get("ai_digest_title_max_len", 120)
-        content_max_len = self.config.get("ai_digest_content_max_len", 2048)
+        ai_config = self.config.get("ai_config", {})
+        max_articles = ai_config.get("ai_digest_max_articles", 50)
+        max_input_tokens = ai_config.get("ai_digest_max_input_tokens", 131072)
+        max_output_tokens = ai_config.get("ai_digest_max_output_tokens", 8192)
+        title_max_len = ai_config.get("ai_digest_title_max_len", 120)
+        content_max_len = ai_config.get("ai_digest_content_max_len", 2048)
 
         trimmed = self._trim_candidates(
             articles[:max_articles], title_max_len, content_max_len

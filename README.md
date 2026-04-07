@@ -23,23 +23,23 @@
 
 ## 配置说明
 
-在 AstrBot 管理面板中配置以下选项：
+在 AstrBot 管理面板中配置以下选项（配置已按功能分区）：
 
-### AI 摘要配置
+### AI 摘要配置 (`ai_config`)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `ai_provider` | "" | AI Provider ID，为空则使用会话默认 |
 | `ai_fallback_providers` | [] | 备用 Provider ID 列表，主 Provider 失败时依次尝试 |
+| `ai_summary_timezone` | "Asia/Shanghai" | 摘要时区 |
 | `ai_digest_max_articles` | 50 | 每次摘要最大文章数 |
 | `ai_digest_max_input_tokens` | 131072 | 最大输入 token 数 |
 | `ai_digest_max_output_tokens` | 8192 | 最大输出 token 数 |
 | `ai_digest_title_max_len` | 120 | 标题最大字符数 |
 | `ai_digest_content_max_len` | 2048 | 内容最大字符数 |
 | `ai_fallback_message` | "" | AI 摘要失败时的提示消息 |
-| `ai_summary_timezone` | "Asia/Shanghai" | 摘要时区 |
 
-### 订阅配置
+### RSS 抓取配置 (`fetch_config`)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
@@ -50,25 +50,32 @@
 | `max_image_number` | 0 | 每篇文章最大图片数，0 为不限制 |
 | `enable_spoiler` | false | 图片使用剧透标签 |
 
-### RSSHub 配置
+### RSSHub 配置 (`rsshub_config`)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `rsshub_url` | "" | RSSHub 服务器地址 |
 | `rsshub_key` | "" | RSSHub 访问密钥 |
 
-### 代理配置
+### 代理配置 (`proxy_config`)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `proxy` | "" | HTTP 代理地址 |
 | `enable_proxy` | false | 是否启用代理 |
 
-### 数据配置
+### 存储配置 (`storage_config`)
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `article_retention_days` | 30 | 文章保留天数 |
+
+### 输出配置 (`output_config`)
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `t2i_webhook_enabled` | false | Webhook 摘要启用图片渲染 |
+| `t2i_platform_enabled` | false | 平台消息摘要启用图片渲染 |
 
 ## 命令列表
 

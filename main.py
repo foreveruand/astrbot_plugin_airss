@@ -54,11 +54,14 @@ class Main(star.Star):
         self.db = Database(db_path)
         await self.db.init_db()
 
+        proxy_config = self.config.get("proxy_config", {})
         self.fetcher = RSSFetcher(
-            proxy=self.config.get("proxy") if self.config.get("enable_proxy") else None,
+            proxy=proxy_config.get("proxy")
+            if proxy_config.get("enable_proxy")
+            else None,
             timeout=30,
-            rsshub_url=self.config.get("rsshub_url"),
-            rsshub_key=self.config.get("rsshub_key"),
+            rsshub_url=self.config.get("rsshub_config", {}).get("rsshub_url"),
+            rsshub_key=self.config.get("rsshub_config", {}).get("rsshub_key"),
         )
 
         self.scheduler = RSSScheduler(self.context, self.db, self.fetcher, self.config)
@@ -72,7 +75,9 @@ class Main(star.Star):
         await self._init_cleanup_job()
 
     async def _init_cleanup_job(self) -> None:
-        retention_days = self.config.get("article_retention_days", 30)
+        retention_days = self.config.get("storage_config", {}).get(
+            "article_retention_days", 30
+        )
 
         async def _cleanup_handler() -> None:
             deleted = await self.db.cleanup_old_articles(retention_days)

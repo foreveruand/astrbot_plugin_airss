@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-04-07
+
+### Changed
+- Configuration schema restructured with hierarchical sections (following astrbot_plugin_opencode pattern)
+  - `ai_config`: AI digest settings (provider, fallback providers, token limits, etc.)
+  - `fetch_config`: RSS fetch settings (interval, error count, timeout, image limits, etc.)
+  - `rsshub_config`: RSSHub settings (URL, access key)
+  - `proxy_config`: Proxy settings (URL, enable/disable)
+  - `storage_config`: Storage settings (article retention days)
+  - `output_config`: Output settings (text-to-image for webhook/platform)
+  - Updated config access pattern: `self.config.get("section_name", {}).get("key")`
+  - Backward compatible: existing flat config values will still work with `.get()` fallback
+
 ## [1.3.0] - 2026-04-07
 
 ### Added

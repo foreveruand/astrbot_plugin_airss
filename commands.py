@@ -445,7 +445,7 @@ class RSSCommands:
                 continue
             subscribers = await self.db.get_subscribers(sub.id)
             is_subscribed = any(s.umo == umo for s in subscribers)
-            
+
             global_stop_indicator = "⏸️" if sub.stop else "▶️"
 
             user_subscriber = next((s for s in subscribers if s.umo == umo), None)
@@ -477,7 +477,6 @@ class RSSCommands:
             lines.append("")
 
         event.set_result(MessageEventResult().message("\n".join(lines)))
-
 
     async def rssupdate(
         self,

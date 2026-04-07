@@ -50,6 +50,7 @@ class RSSFetcher:
         elif self.rsshub_key:
             from urllib.parse import quote
             import hashlib
+
             encoded_router = quote(f"/{path.lstrip('/')}")
             code = hashlib.md5(f"{encoded_router}{self.rsshub_key}".encode()).hexdigest()
             return f"{self.rsshub_url}/{path.lstrip('/')}?code={code}"
@@ -196,7 +197,9 @@ class RSSFetcher:
                 author = ""
                 if entry.get("author"):
                     author = entry.author
-                elif entry.get("author_detail") and hasattr(entry.author_detail, "name"):
+                elif entry.get("author_detail") and hasattr(
+                    entry.author_detail, "name"
+                ):
                     author = entry.author_detail.name
 
                 # Get images from content

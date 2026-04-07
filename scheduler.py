@@ -403,8 +403,8 @@ class RSSScheduler:
                 )
                 return
 
-            config = self.context.get_config() or {}
-            max_error_count = config.get("max_error_count", 100)
+            fetch_config = self.config.get("fetch_config", {})
+            max_error_count = fetch_config.get("max_error_count", 100)
 
             if subscription.error_count >= max_error_count:
                 logger.warning(
@@ -596,8 +596,8 @@ class RSSScheduler:
 
             if article.image_urls:
                 max_images = subscription.max_image_number or self.config.get(
-                    "max_image_number", 0
-                )
+                    "fetch_config", {}
+                ).get("max_image_number", 0)
                 images_to_send = (
                     article.image_urls[:max_images]
                     if max_images > 0
@@ -742,8 +742,9 @@ class RSSScheduler:
 
         article_ids = [a.id for a in articles if a.id]
 
-        t2i_webhook = self.config.get("t2i_webhook_enabled", False)
-        t2i_platform = self.config.get("t2i_platform_enabled", False)
+        output_config = self.config.get("output_config", {})
+        t2i_webhook = output_config.get("t2i_webhook_enabled", False)
+        t2i_platform = output_config.get("t2i_platform_enabled", False)
 
         # Send to each subscriber
         for umo, subscriber in umo_to_subscriber.items():

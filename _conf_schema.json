@@ -1,138 +1,174 @@
 {
-  "ai_provider": {
-    "type": "string",
-    "default": "",
-    "_special": "select_provider",
-    "description": "AI 摘要生成使用的 Provider ID",
-    "hint": "Provider ID from AstrBot's provider list"
+  "ai_config": {
+    "description": "AI 摘要配置",
+    "type": "object",
+    "items": {
+      "ai_provider": {
+        "type": "string",
+        "default": "",
+        "_special": "select_provider",
+        "description": "AI 摘要生成使用的 Provider ID",
+        "hint": "Provider ID from AstrBot's provider list"
+      },
+      "ai_fallback_providers": {
+        "type": "list",
+        "default": [],
+        "description": "AI 摘要备用 Provider ID 列表，当主 Provider 失败时依次尝试",
+        "hint": "List of fallback Provider IDs, e.g., [\"openai_backup\", \"gemini_backup\"]"
+      },
+      "ai_summary_timezone": {
+        "type": "string",
+        "default": "Asia/Shanghai",
+        "description": "AI 摘要时区"
+      },
+      "ai_digest_max_articles": {
+        "type": "int",
+        "default": 50,
+        "description": "每次 AI 摘要最大文章数",
+        "min": 1,
+        "max": 200
+      },
+      "ai_digest_max_input_tokens": {
+        "type": "int",
+        "default": 131072,
+        "description": "AI 摘要最大输入 Token 数",
+        "hint": "Default 128K tokens, reduce for smaller models"
+      },
+      "ai_digest_max_output_tokens": {
+        "type": "int",
+        "default": 8192,
+        "description": "AI 摘要最大输出 Token 数",
+        "min": 256,
+        "max": 32768
+      },
+      "ai_digest_title_max_len": {
+        "type": "int",
+        "default": 120,
+        "description": "摘要中文章标题最大字符数",
+        "min": 50,
+        "max": 500
+      },
+      "ai_digest_content_max_len": {
+        "type": "int",
+        "default": 2048,
+        "description": "摘要中文章内容最大字符数",
+        "min": 100,
+        "max": 10000
+      },
+      "ai_fallback_message": {
+        "type": "string",
+        "default": "",
+        "description": "AI 摘要失败时的提示消息（为空则显示文章列表）"
+      }
+    }
   },
-  "ai_fallback_providers": {
-    "type": "list",
-    "default": [],
-    "description": "AI 摘要备用 Provider ID 列表，当主 Provider 失败时依次尝试",
-    "hint": "List of fallback Provider IDs, e.g., [\"openai_backup\", \"gemini_backup\"]"
+  "fetch_config": {
+    "description": "RSS 抓取配置",
+    "type": "object",
+    "items": {
+      "default_interval": {
+        "type": "int",
+        "default": 5,
+        "description": "默认 RSS 抓取间隔（分钟）",
+        "min": 1,
+        "max": 1440
+      },
+      "max_error_count": {
+        "type": "int",
+        "default": 100,
+        "description": "最大连续错误次数，超过后跳过抓取",
+        "min": 1,
+        "max": 1000
+      },
+      "max_concurrent_fetches": {
+        "type": "int",
+        "default": 5,
+        "description": "最大并发 RSS 抓取数",
+        "min": 1,
+        "max": 20
+      },
+      "request_timeout": {
+        "type": "int",
+        "default": 30,
+        "description": "HTTP 请求超时时间（秒）",
+        "min": 5,
+        "max": 120
+      },
+      "max_image_number": {
+        "type": "int",
+        "default": 0,
+        "description": "每篇文章最大图片数（0 = 不限制）",
+        "min": 0,
+        "max": 10
+      },
+      "enable_spoiler": {
+        "type": "bool",
+        "default": false,
+        "description": "图片使用剧透标签"
+      }
+    }
   },
-  "default_interval": {
-    "type": "int",
-    "default": 5,
-    "description": "默认 RSS 抓取间隔（分钟）",
-    "min": 1,
-    "max": 1440
+  "rsshub_config": {
+    "description": "RSSHub 配置",
+    "type": "object",
+    "items": {
+      "rsshub_url": {
+        "type": "string",
+        "default": "",
+        "description": "RSSHub 服务器地址（可选）",
+        "hint": "Custom RSSHub instance URL, e.g., https://rsshub.app"
+      },
+      "rsshub_key": {
+        "type": "string",
+        "default": "",
+        "description": "RSSHub 访问密钥（可选）"
+      }
+    }
   },
-  "max_error_count": {
-    "type": "int",
-    "default": 100,
-    "description": "最大连续错误次数，超过后跳过抓取",
-    "min": 1,
-    "max": 1000
+  "proxy_config": {
+    "description": "代理配置",
+    "type": "object",
+    "items": {
+      "proxy": {
+        "type": "string",
+        "default": "",
+        "description": "HTTP 代理地址",
+        "hint": "Format: http://host:port"
+      },
+      "enable_proxy": {
+        "type": "bool",
+        "default": false,
+        "description": "启用代理进行 RSS 抓取"
+      }
+    }
   },
-  "max_image_number": {
-    "type": "int",
-    "default": 0,
-    "description": "每篇文章最大图片数（0 = 不限制）",
-    "min": 0,
-    "max": 10
+  "storage_config": {
+    "description": "存储配置",
+    "type": "object",
+    "items": {
+      "article_retention_days": {
+        "type": "int",
+        "default": 30,
+        "description": "文章保留天数，过期自动清理",
+        "min": 1,
+        "max": 365
+      }
+    }
   },
-  "enable_spoiler": {
-    "type": "bool",
-    "default": false,
-    "description": "图片使用剧透标签"
-  },
-  "max_concurrent_fetches": {
-    "type": "int",
-    "default": 5,
-    "description": "最大并发 RSS 抓取数",
-    "min": 1,
-    "max": 20
-  },
-  "request_timeout": {
-    "type": "int",
-    "default": 30,
-    "description": "HTTP 请求超时时间（秒）",
-    "min": 5,
-    "max": 120
-  },
-  "rsshub_url": {
-    "type": "string",
-    "default": "",
-    "description": "RSSHub 服务器地址（可选）",
-    "hint": "Custom RSSHub instance URL, e.g., https://rsshub.app"
-  },
-  "rsshub_key": {
-    "type": "string",
-    "default": "",
-    "description": "RSSHub 访问密钥（可选）"
-  },
-  "proxy": {
-    "type": "string",
-    "default": "",
-    "description": "HTTP 代理地址",
-    "hint": "Format: http://host:port"
-  },
-  "enable_proxy": {
-    "type": "bool",
-    "default": false,
-    "description": "启用代理进行 RSS 抓取"
-  },
-  "ai_summary_timezone": {
-    "type": "string",
-    "default": "Asia/Shanghai",
-    "description": "AI 摘要时区"
-  },
-  "ai_digest_max_articles": {
-    "type": "int",
-    "default": 50,
-    "description": "每次 AI 摘要最大文章数",
-    "min": 1,
-    "max": 200
-  },
-  "ai_digest_max_input_tokens": {
-    "type": "int",
-    "default": 131072,
-    "description": "AI 摘要最大输入 Token 数",
-    "hint": "Default 128K tokens, reduce for smaller models"
-  },
-  "ai_digest_max_output_tokens": {
-    "type": "int",
-    "default": 8192,
-    "description": "AI 摘要最大输出 Token 数",
-    "min": 256,
-    "max": 32768
-  },
-  "ai_digest_title_max_len": {
-    "type": "int",
-    "default": 120,
-    "description": "摘要中文章标题最大字符数",
-    "min": 50,
-    "max": 500
-  },
-  "ai_digest_content_max_len": {
-    "type": "int",
-    "default": 2048,
-    "description": "摘要中文章内容最大字符数",
-    "min": 100,
-    "max": 10000
-  },
-  "ai_fallback_message": {
-    "type": "string",
-    "default": "",
-    "description": "AI 摘要失败时的提示消息（为空则显示文章列表）"
-  },
-  "article_retention_days": {
-    "type": "int",
-    "default": 30,
-    "description": "文章保留天数，过期自动清理",
-    "min": 1,
-    "max": 365
-  },
-  "t2i_webhook_enabled": {
-    "type": "bool",
-    "default": false,
-    "description": "Webhook 摘要启用图片渲染（将 AI 摘要文字转为图片后发送至企业微信等 Webhook）"
-  },
-  "t2i_platform_enabled": {
-    "type": "bool",
-    "default": false,
-    "description": "平台消息摘要启用图片渲染（Telegram、WeCom 等通道，摘要转图片后发送）"
+  "output_config": {
+    "description": "输出配置",
+    "type": "object",
+    "items": {
+      "t2i_webhook_enabled": {
+        "type": "bool",
+        "default": false,
+        "description": "Webhook 摘要启用图片渲染（将 AI 摘要文字转为图片后发送至企业微信等 Webhook）"
+      },
+      "t2i_platform_enabled": {
+        "type": "bool",
+        "default": false,
+        "description": "平台消息摘要启用图片渲染（Telegram、WeCom 等通道，摘要转图片后发送）"
+      }
+    }
   }
 }
