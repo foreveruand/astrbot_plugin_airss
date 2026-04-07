@@ -2,8 +2,10 @@
 Database operations for the RSS plugin using async SQLite.
 """
 
+import asyncio
 import hashlib
 import logging
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -371,35 +373,55 @@ class Database:
     async def add_article(self, article: RSSArticle) -> int | None:
         """Add article if not exists. Returns article ID or None if duplicate."""
         content_hash = self._hash_content(article.guid, article.link)
+
+        max_retries = 3
+        backoff_delays = [0.1, 0.3, 1.0]
+
         async with aiosqlite.connect(self.db_path) as conn:
-            try:
-                cursor = await conn.execute(
-                    """
-                    INSERT INTO articles
-                    (subscription_id, title, content, link, guid, author, published_at, fetched_at, is_sent, image_urls, content_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        article.subscription_id,
-                        article.title,
-                        article.content,
-                        article.link,
-                        article.guid,
-                        article.author,
-                        article.published_at.isoformat()
-                        if article.published_at
-                        else None,
-                        article.fetched_at.isoformat(),
-                        1 if article.is_sent else 0,
-                        "|||".join(article.image_urls),
-                        content_hash,
-                    ),
-                )
-                await conn.commit()
-                return cursor.lastrowid
-            except aiosqlite.IntegrityError:
-                # Duplicate article
-                return None
+            for attempt in range(max_retries):
+                try:
+                    cursor = await conn.execute(
+                        """
+                        INSERT INTO articles
+                        (subscription_id, title, content, link, guid, author, published_at, fetched_at, is_sent, image_urls, content_hash)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            article.subscription_id,
+                            article.title,
+                            article.content,
+                            article.link,
+                            article.guid,
+                            article.author,
+                            article.published_at.isoformat()
+                            if article.published_at
+                            else None,
+                            article.fetched_at.isoformat(),
+                            1 if article.is_sent else 0,
+                            "|||".join(article.image_urls),
+                            content_hash,
+                        ),
+                    )
+                    await conn.commit()
+                    return cursor.lastrowid
+                except aiosqlite.IntegrityError:
+                    # Duplicate article - return None immediately (NO RETRY)
+                    return None
+                except sqlite3.OperationalError as e:
+                    if "database is locked" not in str(e):
+                        # Not a lock error - re-raise immediately
+                        raise
+                    if attempt < max_retries - 1:
+                        logger.warning(
+                            f"Retrying add_article (attempt {attempt + 1}/{max_retries}): {e}"
+                        )
+                        await asyncio.sleep(backoff_delays[attempt])
+                    else:
+                        # Exhausted retries
+                        logger.warning(
+                            f"Max retries exhausted for article '{article.title}': {e}"
+                        )
+                        return None
 
     async def article_exists(self, subscription_id: int, guid: str, link: str) -> bool:
         """Check if article already exists."""
