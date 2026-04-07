@@ -98,6 +98,25 @@ class Database:
             """)
             await conn.commit()
 
+            # Enable WAL mode for better concurrent write handling
+            try:
+                await conn.execute("PRAGMA journal_mode=WAL;")
+                await conn.commit()
+
+                # Verify and log the journal mode
+                cursor = await conn.execute("PRAGMA journal_mode;")
+                row = await cursor.fetchone()
+                if row and row[0] == "wal":
+                    logger.info("SQLite WAL mode enabled successfully")
+                else:
+                    logger.warning(
+                        f"SQLite journal mode: {row[0] if row else 'unknown'}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to enable WAL mode: {e}, using default journal mode"
+                )
+
         # Run migrations for existing databases
         await self._migrate_db()
 
