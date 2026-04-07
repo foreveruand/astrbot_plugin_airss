@@ -5,9 +5,11 @@ Scheduler service for RSS plugin using AstrBot's CronJobManager.
 import asyncio
 import base64
 import hashlib
+import html
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -27,6 +29,119 @@ if TYPE_CHECKING:
 logger = logging.getLogger("astrbot")
 
 MAX_WEBHOOK_TEXT_LENGTH = 4090
+
+
+def markdown_to_html(text: str) -> str:
+    """将 Markdown 文本转换为 HTML，支持常见 Markdown 语法。
+
+    来自 astrbot_plugin_opencode，轻量化实现，无需任何额外依赖。
+    支持：标题、粗体/斜体/删除线、行内代码、围栏代码块、
+    无序/有序列表、引用块、水平线、链接、普通段落。
+    """
+    _BLOCK_RE = re.compile(r"^(#{1,6}\s|```|[ \t]*[-*+]\s|[ \t]*\d+\.\s|>)")
+    _HR_RE = re.compile(r"^(---+|===+|\*\*\*+)\s*$")
+
+    def _inline(s: str) -> str:
+        s = html.escape(s)
+        _stash: list = []
+
+        def _save(m: re.Match) -> str:
+            _stash.append(m.group(1))
+            return f"\x00C{len(_stash) - 1}\x00"
+
+        s = re.sub(r"`([^`\n]+)`", _save, s)
+        s = re.sub(r"\*\*\*(.+?)\*\*\*", r"<strong><em>\1</em></strong>", s)
+        s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+        s = re.sub(r"__(.+?)__", r"<strong>\1</strong>", s)
+        s = re.sub(r"\*([^*\n]+)\*", r"<em>\1</em>", s)
+        s = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"<em>\1</em>", s)
+        s = re.sub(r"~~(.+?)~~", r"<del>\1</del>", s)
+        s = re.sub(
+            r"\[([^\]\n]+)\]\(([^)\n]+)\)",
+            lambda m: f'<a href="{m.group(2)}">{m.group(1)}</a>',
+            s,
+        )
+        for idx, raw in enumerate(_stash):
+            s = s.replace(f"\x00C{idx}\x00", f"<code>{raw}</code>")
+        return s
+
+    lines = text.split("\n")
+    parts: list = []
+    i, n = 0, len(lines)
+
+    while i < n:
+        line = lines[i]
+
+        if line.startswith("```"):
+            lang = line[3:].strip()
+            code_lines: list = []
+            i += 1
+            while i < n and not lines[i].startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            if i < n:
+                i += 1
+            code_body = html.escape("\n".join(code_lines))
+            lang_attr = f' class="language-{html.escape(lang)}"' if lang else ""
+            parts.append(f"<pre><code{lang_attr}>{code_body}</code></pre>")
+            continue
+
+        h_m = re.match(r"^(#{1,6})\s+(.*)", line)
+        if h_m:
+            lvl = len(h_m.group(1))
+            parts.append(f"<h{lvl}>{_inline(h_m.group(2))}</h{lvl}>")
+            i += 1
+            continue
+
+        if _HR_RE.match(line):
+            parts.append("<hr>")
+            i += 1
+            continue
+
+        if re.match(r"^[ \t]*[-*+]\s", line):
+            items: list = []
+            while i < n and re.match(r"^[ \t]*[-*+]\s", lines[i]):
+                content = re.sub(r"^[ \t]*[-*+]\s+", "", lines[i])
+                items.append(f"<li>{_inline(content)}</li>")
+                i += 1
+            parts.append("<ul>" + "".join(items) + "</ul>")
+            continue
+
+        if re.match(r"^[ \t]*\d+\.\s", line):
+            items = []
+            while i < n and re.match(r"^[ \t]*\d+\.\s", lines[i]):
+                content = re.sub(r"^[ \t]*\d+\.\s+", "", lines[i])
+                items.append(f"<li>{_inline(content)}</li>")
+                i += 1
+            parts.append("<ol>" + "".join(items) + "</ol>")
+            continue
+
+        if line.startswith(">"):
+            bq: list = []
+            while i < n and lines[i].startswith(">"):
+                bq.append(_inline(lines[i][1:].lstrip()))
+                i += 1
+            parts.append("<blockquote>" + "<br>".join(bq) + "</blockquote>")
+            continue
+
+        if not line.strip():
+            i += 1
+            continue
+
+        para: list = []
+        while (
+            i < n
+            and lines[i].strip()
+            and not _BLOCK_RE.match(lines[i])
+            and not lines[i].startswith("```")
+            and not _HR_RE.match(lines[i])
+        ):
+            para.append(_inline(lines[i]))
+            i += 1
+        if para:
+            parts.append("<p>" + "<br>".join(para) + "</p>")
+
+    return "\n".join(parts)
 
 
 class RSSScheduler:
@@ -96,19 +211,14 @@ class RSSScheduler:
         return False
 
     def _load_digest_template(self) -> str:
-        """Load the digest Jinja2 HTML template from the plugin directory."""
         tmpl_path = os.path.join(os.path.dirname(__file__), "digest_template.jinja2")
         with open(tmpl_path, "r", encoding="utf-8") as f:
             return f.read()
 
     def _make_template_data(self, text: str) -> dict:
-        """Build template variables for the digest template.
-
-        Content is JSON-encoded so arbitrary markdown text (backticks, quotes, etc.)
-        embeds safely inside the HTML/JS without escaping issues.
-        """
+        html_content = markdown_to_html(text)
         return {
-            "content_json": json.dumps(text),
+            "content": html_content,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
 

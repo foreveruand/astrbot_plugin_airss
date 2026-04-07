@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-04-07
+
+### Fixed
+- Text-to-image rendering for AI digest
+  - Fixed empty content issue when html_renderer captures screenshot before JavaScript execution
+  - Migrated from client-side JavaScript rendering to server-side Python preprocessing
+  - Added `markdown_to_html()` function (from astrbot_plugin_opencode) for reliable markdown parsing
+  - Removed dependency on browser-side marked.js library
+
+### Changed
+- Digest template styling
+  - Changed background from dark theme to paper-style light theme for better readability
+  - Body background: `#f5f5f0` (warm gray paper)
+  - Card background: `#fffef8` (cream/ivory paper)
+  - Updated text colors for light theme compatibility
+
 ## [1.2.0] - 2026-03-23
 
 ### Added
