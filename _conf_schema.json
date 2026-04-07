@@ -6,6 +6,12 @@
     "description": "AI 摘要生成使用的 Provider ID",
     "hint": "Provider ID from AstrBot's provider list"
   },
+  "ai_fallback_providers": {
+    "type": "list",
+    "default": [],
+    "description": "AI 摘要备用 Provider ID 列表，当主 Provider 失败时依次尝试",
+    "hint": "List of fallback Provider IDs, e.g., [\"openai_backup\", \"gemini_backup\"]"
+  },
   "default_interval": {
     "type": "int",
     "default": 5,

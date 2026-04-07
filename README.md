@@ -30,6 +30,7 @@
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `ai_provider` | "" | AI Provider ID，为空则使用会话默认 |
+| `ai_fallback_providers` | [] | 备用 Provider ID 列表，主 Provider 失败时依次尝试 |
 | `ai_digest_max_articles` | 50 | 每次摘要最大文章数 |
 | `ai_digest_max_input_tokens` | 131072 | 最大输入 token 数 |
 | `ai_digest_max_output_tokens` | 8192 | 最大输出 token 数 |

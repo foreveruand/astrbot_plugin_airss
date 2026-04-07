@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-04-07
+
+### Added
+- Provider fallback mechanism for AI digest generation
+  - New config `ai_fallback_providers`: list of backup Provider IDs to try when primary fails
+  - Automatic sequential fallback on provider failure (similar to AstrBot's main agent)
+  - Applied to both `generate_digest()` and `generate_single_summary()` methods
+  - Logging for fallback attempts and success/failure
+
 ## [1.2.1] - 2026-04-07
 
 ### Fixed
