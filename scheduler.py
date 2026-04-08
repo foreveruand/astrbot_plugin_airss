@@ -740,7 +740,7 @@ class RSSScheduler:
             digest_service = DigestService(self.context, self.db, self.config)
 
             # Generate digest
-            digest_content = await digest_service.generate_digest(
+            digest_content, trimmed_count = await digest_service.generate_digest(
                 all_articles, group_id
             )
 
@@ -750,7 +750,7 @@ class RSSScheduler:
             )
 
             logger.info(
-                f"Sent digest for group {group_id} with {len(all_articles)} articles"
+                f"Sent digest for group {group_id} with {trimmed_count} articles"
             )
 
         except Exception as e:

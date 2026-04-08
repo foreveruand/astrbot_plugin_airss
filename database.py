@@ -4,7 +4,7 @@ Database operations for the RSS plugin using async SQLite.
 
 import hashlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,79 +29,108 @@ class Database:
         self._conn: aiosqlite.Connection | None = None
 
     async def init_db(self) -> None:
-        """Initialize database tables."""
-        async with aiosqlite.connect(self.db_path) as conn:
-            await conn.executescript("""
-                CREATE TABLE IF NOT EXISTS subscriptions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    url TEXT NOT NULL UNIQUE,
-                    interval INTEGER DEFAULT 5,
-                    source_group_id INTEGER DEFAULT NULL,
-                    cookies TEXT DEFAULT NULL,
-                    black_keyword TEXT DEFAULT NULL,
-                    content_to_remove TEXT DEFAULT NULL,
-                    max_image_number INTEGER DEFAULT 0,
-                    ai_summary_enabled INTEGER DEFAULT 1,
-                    enable_proxy INTEGER DEFAULT 0,
-                    stop INTEGER DEFAULT 0,
-                    error_count INTEGER DEFAULT 0,
-                    last_fetch TEXT DEFAULT NULL,
-                    etag TEXT DEFAULT NULL,
-                    last_modified TEXT DEFAULT NULL
-                );
+        """Initialize database tables and open the shared persistent connection."""
+        self._conn = await aiosqlite.connect(self.db_path)
+        self._conn.row_factory = aiosqlite.Row
 
-                CREATE TABLE IF NOT EXISTS articles (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    subscription_id INTEGER NOT NULL,
-                    title TEXT,
-                    content TEXT,
-                    link TEXT,
-                    guid TEXT,
-                    author TEXT DEFAULT '',
-                    published_at TEXT,
-                    fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    is_sent INTEGER DEFAULT 0,
-                    image_urls TEXT,
-                    content_hash TEXT,
-                    UNIQUE(subscription_id, content_hash)
-                );
+        await self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL UNIQUE,
+                interval INTEGER DEFAULT 5,
+                source_group_id INTEGER DEFAULT NULL,
+                cookies TEXT DEFAULT NULL,
+                black_keyword TEXT DEFAULT NULL,
+                content_to_remove TEXT DEFAULT NULL,
+                max_image_number INTEGER DEFAULT 0,
+                ai_summary_enabled INTEGER DEFAULT 1,
+                enable_proxy INTEGER DEFAULT 0,
+                stop INTEGER DEFAULT 0,
+                error_count INTEGER DEFAULT 0,
+                last_fetch TEXT DEFAULT NULL,
+                etag TEXT DEFAULT NULL,
+                last_modified TEXT DEFAULT NULL
+            );
 
-                CREATE TABLE IF NOT EXISTS groups (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    schedules TEXT DEFAULT '[]',
-                    persona_id TEXT
-                );
+            CREATE TABLE IF NOT EXISTS articles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscription_id INTEGER NOT NULL,
+                title TEXT,
+                content TEXT,
+                link TEXT,
+                guid TEXT,
+                author TEXT DEFAULT '',
+                published_at TEXT,
+                fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                is_sent INTEGER DEFAULT 0,
+                image_urls TEXT,
+                content_hash TEXT,
+                UNIQUE(subscription_id, content_hash)
+            );
 
-                CREATE TABLE IF NOT EXISTS subscribers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    subscription_id INTEGER NOT NULL,
-                    umo TEXT NOT NULL,
-                    personal_config TEXT DEFAULT '{}',
-                    UNIQUE(subscription_id, umo)
-                );
+            CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                schedules TEXT DEFAULT '[]',
+                persona_id TEXT
+            );
 
-                CREATE TABLE IF NOT EXISTS article_sent (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    article_id INTEGER NOT NULL,
-                    subscriber_id INTEGER NOT NULL,
-                    sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(article_id, subscriber_id)
-                );
+            CREATE TABLE IF NOT EXISTS subscribers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscription_id INTEGER NOT NULL,
+                umo TEXT NOT NULL,
+                personal_config TEXT DEFAULT '{}',
+                UNIQUE(subscription_id, umo)
+            );
 
-                CREATE INDEX IF NOT EXISTS idx_articles_subscription ON articles(subscription_id);
-                CREATE INDEX IF NOT EXISTS idx_articles_sent ON articles(is_sent);
-                CREATE INDEX IF NOT EXISTS idx_subscribers_subscription ON subscribers(subscription_id);
-                CREATE INDEX IF NOT EXISTS idx_article_sent_article ON article_sent(article_id);
-                CREATE INDEX IF NOT EXISTS idx_article_sent_subscriber ON article_sent(subscriber_id);
-            """)
-            await conn.commit()
+            CREATE TABLE IF NOT EXISTS article_sent (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                article_id INTEGER NOT NULL,
+                subscriber_id INTEGER NOT NULL,
+                sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(article_id, subscriber_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_articles_subscription ON articles(subscription_id);
+            CREATE INDEX IF NOT EXISTS idx_articles_sent ON articles(is_sent);
+            CREATE INDEX IF NOT EXISTS idx_subscribers_subscription ON subscribers(subscription_id);
+            CREATE INDEX IF NOT EXISTS idx_article_sent_article ON article_sent(article_id);
+            CREATE INDEX IF NOT EXISTS idx_article_sent_subscriber ON article_sent(subscriber_id);
+        """)
+        await self._conn.commit()
+
+        # Enable WAL mode — persisted to the DB file, helps external readers too
+        try:
+            await self._conn.execute("PRAGMA journal_mode=WAL;")
+            await self._conn.commit()
+            cursor = await self._conn.execute("PRAGMA journal_mode;")
+            row = await cursor.fetchone()
+            journal_mode = row[0] if row else "unknown"
+            if journal_mode == "wal":
+                logger.info("SQLite WAL mode enabled")
+            else:
+                logger.warning(f"SQLite journal mode: {journal_mode}")
+        except Exception as e:
+            logger.warning(f"Failed to enable WAL mode: {e}")
 
         # Run migrations for existing databases
         await self._migrate_db()
 
         logger.info(f"RSS database initialized at {self.db_path}")
+
+    async def close(self) -> None:
+        """Close the shared database connection."""
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
+
+    @asynccontextmanager
+    async def _acquire(self):
+        """Yield the shared persistent connection."""
+        if self._conn is None:
+            raise RuntimeError("Database not initialized. Call init_db() first.")
+        yield self._conn
 
     @staticmethod
     def _hash_content(guid: str, link: str) -> str:
@@ -115,7 +144,7 @@ class Database:
 
     async def _migrate_db(self) -> None:
         """Migrate database schema for compatibility with old versions."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             # Check if articles table has author column
             cursor = await conn.execute(
                 "SELECT name FROM pragma_table_info('articles') WHERE name = 'author'"
@@ -165,7 +194,7 @@ class Database:
 
     async def add_subscription(self, sub: RSSSubscription) -> int:
         """Add a new subscription. Returns the subscription ID."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             cursor = await conn.execute(
                 """
                 INSERT INTO subscriptions (
@@ -193,7 +222,7 @@ class Database:
 
     async def get_subscription(self, sub_id: int) -> RSSSubscription | None:
         """Get subscription by ID."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute(
                 "SELECT * FROM subscriptions WHERE id = ?", (sub_id,)
@@ -232,7 +261,7 @@ class Database:
 
     async def get_subscription_by_url(self, url: str) -> RSSSubscription | None:
         """Get subscription by URL."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute(
                 "SELECT * FROM subscriptions WHERE url = ?", (url,)
@@ -271,7 +300,7 @@ class Database:
 
     async def get_all_subscriptions(self) -> list[RSSSubscription]:
         """Get all subscriptions."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute("SELECT * FROM subscriptions")
             rows = await cursor.fetchall()
@@ -309,7 +338,7 @@ class Database:
 
     async def update_subscription(self, sub: RSSSubscription) -> None:
         """Update subscription."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             await conn.execute(
                 """
                 UPDATE subscriptions SET
@@ -342,7 +371,7 @@ class Database:
 
     async def delete_subscription(self, sub_id: int) -> None:
         """Delete subscription and related data."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             await conn.execute(
                 "DELETE FROM subscribers WHERE subscription_id = ?", (sub_id,)
             )
@@ -357,7 +386,7 @@ class Database:
     async def add_article(self, article: RSSArticle) -> int | None:
         """Add article if not exists. Returns article ID or None if duplicate."""
         content_hash = self._hash_content(article.guid, article.link)
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             try:
                 cursor = await conn.execute(
                     """
@@ -384,13 +413,12 @@ class Database:
                 await conn.commit()
                 return cursor.lastrowid
             except aiosqlite.IntegrityError:
-                # Duplicate article
                 return None
 
     async def article_exists(self, subscription_id: int, guid: str, link: str) -> bool:
         """Check if article already exists."""
         content_hash = self._hash_content(guid, link)
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             cursor = await conn.execute(
                 "SELECT 1 FROM articles WHERE subscription_id = ? AND content_hash = ?",
                 (subscription_id, content_hash),
@@ -399,7 +427,7 @@ class Database:
 
     async def get_unsent_articles(self, subscription_id: int) -> list[RSSArticle]:
         """Get unsent articles for a subscription."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute(
                 """
@@ -437,7 +465,7 @@ class Database:
         """Mark articles as sent."""
         if not article_ids:
             return
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             placeholders = ",".join("?" * len(article_ids))
             await conn.execute(
                 f"UPDATE articles SET is_sent = 1 WHERE id IN ({placeholders})",
@@ -453,7 +481,7 @@ class Database:
         """Mark articles as sent to a specific subscriber."""
         if not article_ids:
             return
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             await conn.executemany(
                 "INSERT OR IGNORE INTO article_sent (article_id, subscriber_id) VALUES (?, ?)",
                 [(article_id, subscriber_id) for article_id in article_ids],
@@ -464,7 +492,7 @@ class Database:
         self, subscription_id: int, subscriber_id: int
     ) -> list[RSSArticle]:
         """Get articles not yet sent to a specific subscriber."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute(
                 """
@@ -508,7 +536,7 @@ class Database:
 
         Used when adding a new subscriber to prevent sending old articles.
         """
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             await conn.execute(
                 """
                 INSERT OR IGNORE INTO article_sent (article_id, subscriber_id)
@@ -522,7 +550,7 @@ class Database:
 
     async def add_group(self, group: RSSGroup) -> int:
         """Add a new group. Returns the group ID."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             cursor = await conn.execute(
                 "INSERT INTO groups (name, schedules, persona_id) VALUES (?, ?, ?)",
                 (group.name, "[]", group.persona_id),
@@ -532,7 +560,7 @@ class Database:
 
     async def get_group(self, group_id: int) -> RSSGroup | None:
         """Get group by ID."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute(
                 "SELECT * FROM groups WHERE id = ?", (group_id,)
@@ -551,7 +579,7 @@ class Database:
 
     async def get_all_groups(self) -> list[RSSGroup]:
         """Get all groups."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             import json
 
             conn.row_factory = aiosqlite.Row
@@ -569,7 +597,7 @@ class Database:
 
     async def update_group(self, group: RSSGroup) -> None:
         """Update group."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             import json
 
             await conn.execute(
@@ -585,7 +613,7 @@ class Database:
 
     async def delete_group(self, group_id: int) -> None:
         """Delete group."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             await conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
             await conn.commit()
 
@@ -596,7 +624,7 @@ class Database:
 
         Also marks all existing articles as sent to prevent sending old articles.
         """
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             import json
 
             try:
@@ -620,7 +648,7 @@ class Database:
 
     async def get_subscribers(self, subscription_id: int) -> list[Subscriber]:
         """Get all subscribers for a subscription."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             import json
 
             conn.row_factory = aiosqlite.Row
@@ -643,7 +671,7 @@ class Database:
 
     async def get_subscriber(self, subscription_id: int, umo: str) -> Subscriber | None:
         """Get specific subscriber."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             import json
 
             conn.row_factory = aiosqlite.Row
@@ -665,7 +693,7 @@ class Database:
 
     async def update_subscriber(self, subscriber: Subscriber) -> None:
         """Update subscriber config."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             import json
 
             await conn.execute(
@@ -676,7 +704,7 @@ class Database:
 
     async def delete_subscriber(self, subscription_id: int, umo: str) -> None:
         """Delete subscriber."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             await conn.execute(
                 "DELETE FROM subscribers WHERE subscription_id = ? AND umo = ?",
                 (subscription_id, umo),
@@ -685,7 +713,7 @@ class Database:
 
     async def get_subscriptions_by_group(self, group_id: int) -> list[RSSSubscription]:
         """Get all subscriptions in a group."""
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             conn.row_factory = aiosqlite.Row
             cursor = await conn.execute(
                 "SELECT * FROM subscriptions WHERE source_group_id = ?", (group_id,)
@@ -738,7 +766,7 @@ class Database:
         if key not in GLOBAL_CONFIGURABLE_FIELDS:
             raise ValueError(f"Field '{key}' is not configurable")
 
-        async with aiosqlite.connect(self.db_path) as conn:
+        async with self._acquire() as conn:
             # Convert bool to int for SQLite
             if isinstance(value, bool):
                 value = 1 if value else 0
@@ -765,7 +793,6 @@ class Database:
         Returns:
             Count of deleted articles.
         """
-        cutoff = self._retention_cutoff(retention_days).isoformat()
         async with aiosqlite.connect(self.db_path) as conn:
             # First clean up orphaned article_sent rows for articles that will be deleted
             await conn.execute(

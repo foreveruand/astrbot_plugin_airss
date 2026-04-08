@@ -87,7 +87,7 @@ class DigestService:
         self,
         articles: list[RSSArticle],
         group_id: int,
-    ) -> str:
+    ) -> tuple[str, int]:
         """
         Generate an AI digest from articles.
 
@@ -96,10 +96,10 @@ class DigestService:
             group_id: Group ID for persona lookup
 
         Returns:
-            Generated digest content
+            Tuple of (generated digest content, number of articles processed)
         """
         if not articles:
-            return "暂无新文章。"
+            return "暂无新文章。", 0
 
         ai_config = self.config.get("ai_config", {})
         max_articles = ai_config.get("ai_digest_max_articles", 50)
@@ -115,7 +115,7 @@ class DigestService:
             filtered_articles[:max_articles], title_max_len, content_max_len
         )
         if not trimmed:
-            return "暂无新文章。"
+            return "暂无新文章。", 0
 
         system_prompt = await self._get_persona_system_prompt(group_id)
         prompt = self._build_prompt(trimmed)
@@ -161,7 +161,7 @@ class DigestService:
                         "Digest generation succeeded with fallback provider: %s",
                         provider_id,
                     )
-                return response.completion_text
+                return response.completion_text, len(trimmed)
             except Exception as e:
                 last_exception = e
                 logger.warning(

@@ -103,6 +103,7 @@ class Main(star.Star):
 
     async def terminate(self) -> None:
         """Called when the plugin is disabled or reloaded."""
+        await self.db.close()
         logger.info("RSS plugin terminated")
 
     def _parse_args(self, message: str) -> list[str]:
