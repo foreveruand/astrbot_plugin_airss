@@ -4,7 +4,7 @@ Database operations for the RSS plugin using async SQLite.
 
 import hashlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +107,11 @@ class Database:
     def _hash_content(guid: str, link: str) -> str:
         """Generate hash for article deduplication."""
         return hashlib.md5(f"{guid}:{link}".encode()).hexdigest()
+
+    @staticmethod
+    def _retention_cutoff(retention_days: int) -> datetime:
+        """Build the UTC cutoff datetime for retention checks."""
+        return datetime.now(timezone.utc) - timedelta(days=retention_days)
 
     async def _migrate_db(self) -> None:
         """Migrate database schema for compatibility with old versions."""
@@ -760,6 +765,7 @@ class Database:
         Returns:
             Count of deleted articles.
         """
+        cutoff = self._retention_cutoff(retention_days).isoformat()
         async with aiosqlite.connect(self.db_path) as conn:
             # First clean up orphaned article_sent rows for articles that will be deleted
             await conn.execute(
@@ -767,17 +773,17 @@ class Database:
                 DELETE FROM article_sent
                 WHERE article_id IN (
                     SELECT id FROM articles
-                    WHERE datetime(fetched_at) < datetime('now', ? || ' days')
+                    WHERE COALESCE(published_at, fetched_at) < ?
                 )
                 """,
-                (f"-{retention_days}",),
+                (cutoff,),
             )
             cursor = await conn.execute(
                 """
                 DELETE FROM articles
-                WHERE datetime(fetched_at) < datetime('now', ? || ' days')
+                WHERE COALESCE(published_at, fetched_at) < ?
                 """,
-                (f"-{retention_days}",),
+                (cutoff,),
             )
             await conn.commit()
             return cursor.rowcount

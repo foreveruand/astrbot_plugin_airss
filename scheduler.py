@@ -6,11 +6,10 @@ import asyncio
 import base64
 import hashlib
 import html
-import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import aiohttp
@@ -174,6 +173,39 @@ class RSSScheduler:
             return text
         return encoded[:max_bytes].decode("utf-8", errors="ignore")
 
+    @staticmethod
+    def _get_article_retention_cutoff(retention_days: int) -> datetime | None:
+        """Return the UTC cutoff for article retention filtering."""
+        if retention_days <= 0:
+            return None
+        return datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+    @staticmethod
+    def _normalize_article_time(article: RSSArticle) -> datetime | None:
+        """Normalize article time for retention checks."""
+        article_time = article.published_at or article.fetched_at
+        if not article_time:
+            return None
+        if article_time.tzinfo is None:
+            return article_time.replace(tzinfo=timezone.utc)
+        return article_time.astimezone(timezone.utc)
+
+    def _filter_expired_articles(
+        self, articles: list[RSSArticle], retention_days: int
+    ) -> list[RSSArticle]:
+        """Drop articles older than the configured retention window."""
+        cutoff = self._get_article_retention_cutoff(retention_days)
+        if cutoff is None:
+            return articles
+
+        filtered_articles = []
+        for article in articles:
+            article_time = self._normalize_article_time(article)
+            if article_time is None or article_time >= cutoff:
+                filtered_articles.append(article)
+
+        return filtered_articles
+
     async def _send_webhook(
         self,
         webhook_url: str,
@@ -212,7 +244,7 @@ class RSSScheduler:
 
     def _load_digest_template(self) -> str:
         tmpl_path = os.path.join(os.path.dirname(__file__), "digest_template.jinja2")
-        with open(tmpl_path, "r", encoding="utf-8") as f:
+        with open(tmpl_path, encoding="utf-8") as f:
             return f.read()
 
     def _make_template_data(self, text: str) -> dict:
@@ -405,6 +437,9 @@ class RSSScheduler:
 
             fetch_config = self.config.get("fetch_config", {})
             max_error_count = fetch_config.get("max_error_count", 100)
+            retention_days = self.config.get("storage_config", {}).get(
+                "article_retention_days", 30
+            )
 
             if subscription.error_count >= max_error_count:
                 logger.warning(
@@ -440,6 +475,9 @@ class RSSScheduler:
                 await self.db.update_subscription(subscription)
                 logger.error(f"Failed to fetch {subscription.name}: {result.error}")
             else:
+                result.articles = self._filter_expired_articles(
+                    result.articles, retention_days
+                )
                 subscription.etag = result.etag
                 subscription.last_modified = result.last_modified
                 subscription.last_fetch = (

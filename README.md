@@ -33,6 +33,7 @@
 | `ai_fallback_providers` | [] | 备用 Provider ID 列表，主 Provider 失败时依次尝试 |
 | `ai_summary_timezone` | "Asia/Shanghai" | 摘要时区 |
 | `ai_digest_max_articles` | 50 | 每次摘要最大文章数 |
+| `ai_digest_recent_days` | 0 | 仅摘要最近 X 天更新的文章，0 为不限制 |
 | `ai_digest_max_input_tokens` | 131072 | 最大输入 token 数 |
 | `ai_digest_max_output_tokens` | 8192 | 最大输出 token 数 |
 | `ai_digest_title_max_len` | 120 | 标题最大字符数 |
@@ -68,7 +69,7 @@
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `article_retention_days` | 30 | 文章保留天数 |
+| `article_retention_days` | 30 | 文章保留天数，按发布时间优先清理；抓取时也会跳过超出保留期的旧文章 |
 
 ### 输出配置 (`output_config`)
 
@@ -150,6 +151,7 @@
 2. **AI Provider**: 确保在配置中设置正确的 Provider ID，或在会话中配置默认 Provider
 3. **Persona**: 创建分组时会自动创建对应的 Persona，可在管理面板中修改
 4. **错误处理**: 订阅连续失败超过 `max_error_count` 次后会跳过抓取，直到手动触发或重置
+5. **文章清理规则**: `article_retention_days` 会优先按文章 `published_at` 判断是否过期；如果订阅源没有发布时间，则回退使用抓取时间 `fetched_at`
 
 ## 迁移自 NoneBot
 

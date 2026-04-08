@@ -17,7 +17,6 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from .commands import GroupCommands, RSSCommands
 from .database import Database
 from .fetcher import RSSFetcher
-from .models import TELEGRAM_ADAPTER
 from .scheduler import RSSScheduler
 
 logger = logging.getLogger("astrbot")

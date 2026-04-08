@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.1] - 2026-04-08
+
+### Fixed
+- Article retention now uses article publish time when available
+  - Cleanup no longer deletes recently fetched but historically published articles based only on `fetched_at`
+  - RSS fetch now skips saving articles that already fall outside `article_retention_days`
+  - When feeds do not provide `published_at`, retention falls back to `fetched_at`
+
+### Added
+- AI 摘要新增 `ai_digest_recent_days` 配置项
+  - 可限制仅摘要最近 X 天内更新的文章
+  - 与 `ai_digest_max_articles` 配合使用，先按时间过滤，再按文章数量截取
+
 ## [1.4.0] - 2026-04-07
 
 ### Changed

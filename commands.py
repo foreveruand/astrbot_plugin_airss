@@ -14,7 +14,6 @@ from .models import (
     GLOBAL_CONFIGURABLE_FIELDS,
     PERSONAL_CONFIG_KEYS,
     TELEGRAM_ADAPTER,
-    WEBHOOK_ADAPTER,
     WECOM_ADAPTER,
     RSSGroup,
     RSSSubscription,
@@ -458,7 +457,6 @@ class RSSCommands:
 
             subscribed_indicator = "✅" if is_subscribed else "⚪"
 
-            status = "✅" if is_subscribed else "⚪"
             status_line = f"{global_stop_indicator}{personal_stop_indicator}{subscribed_indicator} **[{sub.name}]({sub.url})** (ID: {sub.id})"
             lines.append(status_line)
 

@@ -48,8 +48,8 @@ class RSSFetcher:
         if not self.rsshub_url:
             return f"https://rsshub.app/{path.lstrip('/')}"
         elif self.rsshub_key:
-            from urllib.parse import quote
             import hashlib
+            from urllib.parse import quote
 
             encoded_router = quote(f"/{path.lstrip('/')}")
             code = hashlib.md5(f"{encoded_router}{self.rsshub_key}".encode()).hexdigest()
