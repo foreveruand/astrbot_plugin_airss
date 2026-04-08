@@ -4,7 +4,8 @@ Database operations for the RSS plugin using async SQLite.
 
 import hashlib
 import logging
-from datetime import datetime
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -793,7 +794,8 @@ class Database:
         Returns:
             Count of deleted articles.
         """
-        async with aiosqlite.connect(self.db_path) as conn:
+        cutoff = self._retention_cutoff(retention_days).isoformat()
+        async with self._acquire() as conn:
             # First clean up orphaned article_sent rows for articles that will be deleted
             await conn.execute(
                 """
