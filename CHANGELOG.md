@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.3] - 2026-04-08
+
+### Added
+- Image quality control configuration for text-to-image rendering
+  - `t2i_image_type`: Image format (jpeg/png), jpeg for smaller files, png for transparency
+  - `t2i_image_quality`: JPEG quality (10-100), recommended 60-90
+  - `t2i_scale`: Page scale setting (css/device), device uses device pixel ratio
+  - `t2i_full_page`: Whether to render full page or viewport only
+  - These options apply to AI digest image rendering for both webhook and platform messages
+
 ## [1.4.2] - 2026-04-08
 
 ### Fixed

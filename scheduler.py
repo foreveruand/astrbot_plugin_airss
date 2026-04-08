@@ -254,6 +254,16 @@ class RSSScheduler:
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
         }
 
+    def _get_t2i_options(self) -> dict:
+        """Get t2i rendering options from configuration."""
+        output_config = self.config.get("output_config", {})
+        return {
+            "type": output_config.get("t2i_image_type", "jpeg"),
+            "quality": output_config.get("t2i_image_quality", 70),
+            "full_page": output_config.get("t2i_full_page", True),
+            "scale": output_config.get("t2i_scale", "device"),
+        }
+
     async def _render_digest_image(self, text: str, return_url: bool = False) -> str:
         """Render digest markdown to an image using the custom template.
 
@@ -271,11 +281,12 @@ class RSSScheduler:
 
         tmpl_str = self._load_digest_template()
         tmpl_data = self._make_template_data(text)
+        t2i_options = self._get_t2i_options()
         return await html_renderer.render_custom_template(
             tmpl_str,
             tmpl_data,
             return_url=return_url,
-            options={"full_page": True, "type": "jpeg", "quality": 70},
+            options=t2i_options,
         )
 
     async def _send_webhook_image(

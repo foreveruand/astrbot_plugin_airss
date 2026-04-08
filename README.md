@@ -77,6 +77,28 @@
 |--------|--------|------|
 | `t2i_webhook_enabled` | false | Webhook 摘要启用图片渲染 |
 | `t2i_platform_enabled` | false | 平台消息摘要启用图片渲染 |
+| `t2i_image_type` | "jpeg" | 图片格式，可选 jpeg 或 png |
+| `t2i_image_quality` | 70 | 图片质量（仅 JPEG 有效），范围 10-100 |
+| `t2i_scale` | "device" | 页面缩放设置，可选 css 或 device |
+| `t2i_full_page` | true | 渲染完整页面 |
+
+#### 图片质量控制说明
+
+当启用 `t2i_webhook_enabled` 或 `t2i_platform_enabled` 时，AI 摘要会渲染为图片发送。
+可通过以下选项控制图片质量：
+
+- **`t2i_image_type`**: 选择图片格式
+  - `jpeg`: 文件更小，适合网络传输
+  - `png`: 支持透明背景，文件较大
+- **`t2i_image_quality`**: JPEG 图片质量（10-100）
+  - 推荐 60-90，数值越高质量越好但文件越大
+  - 企业微信 Webhook 有 2MB 文件限制，建议不超过 80
+- **`t2i_scale`**: 页面缩放设置
+  - `device`: 使用设备缩放设置，适合高分屏
+  - `css`: CSS像素对应设备分辨率，高分屏截图变小
+- **`t2i_full_page`**: 是否渲染完整页面
+  - `true`: 渲染完整内容页面
+  - `false`: 仅渲染视口大小
 
 ## 命令列表
 

@@ -175,6 +175,33 @@
         "type": "bool",
         "default": false,
         "description": "平台消息摘要启用图片渲染（Telegram、WeCom 等通道，摘要转图片后发送）"
+      },
+      "t2i_image_type": {
+        "type": "string",
+        "default": "jpeg",
+        "description": "图片格式",
+        "hint": "jpeg 文件更小，png 支持透明背景",
+        "options": ["jpeg", "png"]
+      },
+      "t2i_image_quality": {
+        "type": "int",
+        "default": 70,
+        "description": "图片质量（仅 JPEG 格式有效）",
+        "hint": "数值越高质量越好，文件越大。推荐 60-90",
+        "min": 10,
+        "max": 100
+      },
+      "t2i_scale": {
+        "type": "string",
+        "default": "device",
+        "description": "页面缩放设置",
+        "hint": "css = CSS像素对应设备分辨率（高分屏截图变小），device = 使用设备缩放设置",
+        "options": ["css", "device"]
+      },
+      "t2i_full_page": {
+        "type": "bool",
+        "default": true,
+        "description": "渲染完整页面（而非仅视口大小）"
       }
     }
   }
