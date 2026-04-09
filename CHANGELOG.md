@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- New `rsssub` command for subscriber management (join/leave/add/del/list)
+- New `rssutil` command for utilities (rsshub/test/trigger)
+- Configuration item numbering system (①-⑫) for interactive selection
+- `rssupdate` 4-mode interaction (no args → subscription selection → config item → edit)
+- Telegram inline keyboard button interaction optimization
+- Text list interaction for other platforms
+
+### Changed
+- Command structure refactored to single responsibility (7 commands)
+- `rssadd` simplified to only add subscriptions
+- `rssdel` simplified to only delete subscriptions
+- `rssgroup` removed subadd/subdel, merged time command
+- `rsstrigger` merged into `rssutil trigger`
+
+### Removed
+- Removed `rssadd -g/-p` parameters
+- Removed `rssgroup subadd/subdel` subcommands
+- Removed standalone `rsstrigger` command
+
 ## [1.4.3] - 2026-04-08
 
 ### Added

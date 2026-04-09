@@ -109,20 +109,91 @@
 | `/rssadd <url> [name]` | 添加订阅 | `/rssadd https://example.com/feed.xml 科技资讯` |
 | `/rssdel <name\|id>` | 删除订阅 | `/rssdel 科技资讯` |
 | `/rsslist` | 列出所有订阅 | `/rsslist` |
-| `/rssupdate <name\|id> [key] [value]` | 更新订阅配置 | `/rssupdate 1 only_title true` |
-| `/rsstrigger [name\|id]` | 手动触发更新（管理员） | `/rsstrigger` |
+| `/rssupdate [name\|id] [key] [value]` | 更新订阅配置 | 详见下方交互说明 |
+| `/rssgroup <add/rename/list/time>` | 分组管理 | 详见分组命令 |
+| `/rsssub <join/leave/add/del/list>` | 订阅者管理 | 详见订阅者命令 |
+| `/rssutil <rsshub/test/trigger>` | 工具命令 | 详见工具命令 |
 
-### 分组命令（管理员）
+### rssupdate 交互模式
+
+`/rssupdate` 支持 4 种交互模式：
+
+**模式 A: 无参数**
+```
+/rssupdate
+```
+- Telegram: 显示订阅列表的内联键盘，点击选择
+- 其他平台: 显示文本列表，需回复选择
+
+**模式 B: 仅指定订阅**
+```
+/rssupdate 科技资讯
+```
+显示该订阅的可配置项（个人配置 ①-⑥，全局配置 ⑦-⑫）
+
+**模式 C: 订阅 + 配置项**
+```
+/rssupdate 科技资讯 only_title
+```
+提示输入该配置项的值
+
+**模式 D: 完整参数**
+```
+/rssupdate 科技资讯 only_title true
+```
+直接修改配置
+
+### 配置项编号
+
+**个人配置 (①-⑥)**
+
+| 编号 | 参数 | 说明 |
+|------|------|------|
+| ① | `only_title` | 仅发送标题 |
+| ② | `only_pic` | 仅发送图片 |
+| ③ | `only_has_pic` | 仅发送有图片的文章 |
+| ④ | `enable_spoiler` | 图片使用剧透标签 |
+| ⑤ | `stop` | 暂停订阅 |
+| ⑥ | `black_keyword` | 关键词黑名单（逗号分隔） |
+
+**全局配置 (⑦-⑫，管理员)**
+
+| 编号 | 参数 | 说明 |
+|------|------|------|
+| ⑦ | `interval` | 抓取间隔（分钟） |
+| ⑧ | `max_image_number` | 每篇文章最大图片数 |
+| ⑨ | `ai_summary_enabled` | 启用 AI 摘要 |
+| ⑩ | `enable_proxy` | 启用代理 |
+| ⑪ | `source_group_id` | 所属分组 ID |
+| ⑫ | `black_keyword` | 关键词黑名单 |
+
+### 分组命令 (管理员)
 
 | 命令 | 说明 | 示例 |
 |------|------|------|
 | `/rssgroup add <name>` | 创建分组 | `/rssgroup add 科技资讯` |
 | `/rssgroup rename <id> <name>` | 重命名分组 | `/rssgroup rename 1 科技` |
 | `/rssgroup list` | 列出所有分组 | `/rssgroup list` |
-| `/rssgroup timeadd <id> <HH:MM>` | 添加推送时间 | `/rssgroup timeadd 1 09:00` |
-| `/rssgroup timedel <id> <HH:MM>` | 删除推送时间 | `/rssgroup timedel 1 09:00` |
-| `/rssgroup subadd <id> <session>` | 添加订阅者 | `/rssgroup subadd 1 telegram:GroupMessage:-100123456` |
-| `/rssgroup subdel <id> <session>` | 删除订阅者 | `/rssgroup subdel 1 telegram:GroupMessage:-100123456` |
+| `/rssgroup time <id> add <HH:MM>` | 添加推送时间 | `/rssgroup time 1 add 09:00` |
+| `/rssgroup time <id> del <HH:MM>` | 删除推送时间 | `/rssgroup time 1 del 09:00` |
+
+### 订阅者命令
+
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `/rsssub join <group_id>` | 加入分组（订阅该分组所有源） | `/rsssub join 1` |
+| `/rsssub leave <group_id>` | 离开分组（取消订阅） | `/rsssub leave 1` |
+| `/rsssub add <sub_id> <umo>` | 添加订阅者（管理员） | `/rsssub add 1 telegram:GroupMessage:-100123456` |
+| `/rsssub del <sub_id> <umo>` | 删除订阅者（管理员） | `/rsssub del 1 telegram:GroupMessage:-100123456` |
+| `/rsssub list <sub_id>` | 列出订阅者（管理员） | `/rsssub list 1` |
+
+### 工具命令 (管理员)
+
+| 命令 | 说明 | 示例 |
+|------|------|------|
+| `/rssutil rsshub [path]` | 打印 RSSHub URL | `/rssutil rsshub /twitter/user/elonmusk` |
+| `/rssutil test <url>` | 测试 RSS 源可用性 | `/rssutil test https://example.com/feed.xml` |
+| `/rssutil trigger [name\|id]` | 手动触发抓取 | `/rssutil trigger 科技资讯` |
 
 ## 个性化配置
 
@@ -167,13 +238,23 @@
   - `groups`: 分组
   - `subscribers`: 订阅者
 
+## Telegram 内联键盘交互
+
+在 Telegram 平台，`/rssdel` 和 `/rssupdate` 命令支持内联键盘交互：
+
+- **`/rssdel`**: 显示订阅列表的内联按钮，点击即可删除
+- **`/rssupdate`**: 显示订阅列表，选择后显示配置项编号按钮（①-⑫），点击配置项即可修改
+
+其他平台会显示文本列表，需通过回复序号或完整命令进行操作。
+
 ## 注意事项
 
-1. **Telegram Keyboard**: 支持 Telegram 内联键盘，在 `/rssdel` 和 `/rssupdate` 命令中可通过键盘按钮交互操作
+1. **Telegram Keyboard**: 支持 Telegram 内联键盘，在 `/rssdel` 和 `/rssupdate` 命令中可通过键盘按钮交互操作，详见上方说明
 2. **AI Provider**: 确保在配置中设置正确的 Provider ID，或在会话中配置默认 Provider
 3. **Persona**: 创建分组时会自动创建对应的 Persona，可在管理面板中修改
 4. **错误处理**: 订阅连续失败超过 `max_error_count` 次后会跳过抓取，直到手动触发或重置
 5. **文章清理规则**: `article_retention_days` 会优先按文章 `published_at` 判断是否过期；如果订阅源没有发布时间，则回退使用抓取时间 `fetched_at`
+6. **RSSHub 集成**: 配置 `rsshub_url` 后，可直接使用 `/rssadd /path/to/feed` 添加 RSSHub 路由，无需完整 URL
 
 ## 迁移自 NoneBot
 
