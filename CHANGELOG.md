@@ -2,7 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.5.1] - 2026-04-09
+
+### Fixed
+- Webhook image rendering now validates image format before sending
+  - Detects T2I service error responses (e.g., 502 Internal Server Error)
+  - Falls back to markdown text when invalid image is detected
+
+## [1.5.0] - 2026-04-09
 
 ### Added
 - New `rsssub` command for subscriber management (join/leave/add/del/list)

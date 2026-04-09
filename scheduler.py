@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import aiohttp
+from PIL import Image
 
 from astrbot.api import AstrBotConfig
 from astrbot.core.message.message_event_result import MessageChain
@@ -302,6 +303,17 @@ class RSSScheduler:
             image_bytes: bytes = await asyncio.to_thread(
                 lambda: open(image_path, "rb").read()
             )
+
+            # Validate image format using PIL
+            try:
+                await asyncio.to_thread(
+                    lambda: Image.open(open(image_path, "rb")).verify()
+                )
+            except Exception as img_err:
+                raise ValueError(
+                    f"Rendered file is not a valid image: {img_err}. "
+                    "T2I service may have returned an error response."
+                ) from img_err
 
             if len(image_bytes) > 2 * 1024 * 1024:
                 logger.warning(
