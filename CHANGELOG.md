@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
   - Detects T2I service error responses (e.g., 502 Internal Server Error)
   - Falls back to markdown text when invalid image is detected
 
+### Changed
+- change log level to DEBUG if no new articles when fetch
+
 ## [1.5.0] - 2026-04-09
 
 ### Added

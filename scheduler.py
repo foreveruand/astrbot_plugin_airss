@@ -518,11 +518,14 @@ class RSSScheduler:
                         article.subscription_id = subscription_id
                         await self.db.add_article(article)
                         new_count += 1
-
-                logger.info(
-                    f"Fetched {len(result.articles)} articles, {new_count} new for {subscription.name}"
-                )
-
+                if new_count > 0:
+                    logger.info(
+                        f"Fetched {len(result.articles)} articles, {new_count} new for {subscription.name}"
+                    )
+                else:
+                    logger.debug(
+                        f"Fetched {len(result.articles)} articles, None new for {subscription.name}"
+                    )
             if not subscription.ai_summary_enabled:
                 await self._send_articles_to_subscribers(subscription)
 
