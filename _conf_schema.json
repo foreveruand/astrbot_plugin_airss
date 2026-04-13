@@ -10,11 +10,11 @@
         "description": "AI 摘要生成使用的 Provider ID",
         "hint": "Provider ID from AstrBot's provider list"
       },
-      "ai_fallback_providers": {
-        "type": "list",
-        "default": [],
-        "description": "AI 摘要备用 Provider ID 列表，当主 Provider 失败时依次尝试",
-        "hint": "List of fallback Provider IDs, e.g., [\"openai_backup\", \"gemini_backup\"]"
+      "astrbot_config_file": {
+        "type": "string",
+        "default": "",
+        "description": "AstrBot 配置文件名（可选）",
+        "hint": "留空时不启用 AI 摘要轮换，仅使用主 Provider。可直接填写管理面板里的配置名（default）或实际文件名。默认配置对应 data/cmd_config.json；通过管理面板创建的配置通常位于 data/config/abconf_*.json，可在配置列表或 data/config 目录中查看。填写后将读取该配置文件中的 provider_settings.fallback_chat_models"
       },
       "ai_summary_timezone": {
         "type": "string",

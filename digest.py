@@ -9,6 +9,7 @@ Persona ID format: rss_group_{group_id}
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .database import Database
@@ -51,14 +52,53 @@ class DigestService:
         provider_id = ai_config.get("ai_provider", "")
         return provider_id if provider_id else None
 
-    def _get_fallback_providers(self) -> list[str]:
-        """Get fallback provider IDs from config, excluding primary provider."""
-        primary_provider = self._get_ai_provider()
+    def _get_astrbot_config(self) -> tuple[dict | None, str]:
+        """Resolve the selected AstrBot config used as the fallback source."""
         ai_config = self.config.get("ai_config", {})
-        fallback_ids = ai_config.get("ai_fallback_providers", [])
+        config_file_name = ai_config.get("astrbot_config_file", "")
+        source_name = "disabled"
+
+        if config_file_name:
+            config_mgr = getattr(self.context, "astrbot_config_mgr", None)
+            confs = getattr(config_mgr, "confs", {}) if config_mgr else {}
+            conf_list = config_mgr.get_conf_list() if config_mgr else []
+            target_name = Path(config_file_name).name
+
+            for conf_info in conf_list:
+                conf_id = conf_info.get("id")
+                if conf_id not in confs:
+                    continue
+                display_name = conf_info.get("name", "")
+                path_name = Path(conf_info.get("path", "")).name
+                if config_file_name in {display_name, path_name, conf_id} or target_name in {
+                    display_name,
+                    path_name,
+                    conf_id,
+                }:
+                    source_name = display_name or path_name or conf_id or target_name
+                    return confs[conf_id], source_name
+            logger.warning(
+                "AstrBot config file %s not found, falling back to current session config",
+                config_file_name,
+            )
+            return None, source_name
+
+        return None, source_name
+
+    def _get_fallback_providers(self) -> list[str]:
+        """Get fallback provider IDs from AstrBot config, excluding primary provider."""
+        primary_provider = self._get_ai_provider()
+        astrbot_config, source_name = self._get_astrbot_config()
+        if not astrbot_config:
+            logger.debug("AI fallback providers disabled because astrbot_config_file is empty")
+            return []
+
+        provider_settings = astrbot_config.get("provider_settings", {})
+        fallback_ids = provider_settings.get("fallback_chat_models", [])
+        source_label = "provider_settings.fallback_chat_models"
 
         if not isinstance(fallback_ids, list):
-            logger.warning("ai_fallback_providers is not a list, skipping fallbacks")
+            logger.warning("%s is not a list, skipping fallbacks", source_label)
             return []
 
         seen: set[str] = {primary_provider} if primary_provider else set()
@@ -71,6 +111,12 @@ class DigestService:
                 continue
             valid_fallbacks.append(provider_id)
             seen.add(provider_id)
+
+        logger.debug(
+            "AI fallback providers resolved from %s: %s",
+            source_name,
+            valid_fallbacks,
+        )
 
         return valid_fallbacks
 

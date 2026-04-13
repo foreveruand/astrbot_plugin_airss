@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.3] - 2026-04-13
+
+### Changed
+- `ai_fallback_providers` is now sourced from AstrBot config files
+  - Added `ai_config.astrbot_config_file` to select the AstrBot config file used for fallback provider resolution
+  - When set, the plugin reads `provider_settings.fallback_chat_models` from that AstrBot config
+  - Leaving `astrbot_config_file` empty disables fallback rotation and uses only the primary provider
+
 ## [1.5.2] - 2026-04-13
 
 ### Fixed

@@ -30,7 +30,7 @@
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `ai_provider` | "" | AI Provider ID，为空则使用会话默认 |
-| `ai_fallback_providers` | [] | 备用 Provider ID 列表，主 Provider 失败时依次尝试 |
+| `astrbot_config_file` | "" | 可选的 AstrBot 配置名或文件名。留空时不启用 AI 摘要轮换，仅使用主 Provider。可直接填写管理面板里的配置名（default）或实际文件名；默认配置对应 `data/cmd_config.json`，通过管理面板创建的配置通常位于 `data/config/abconf_*.json`。填写后将读取该配置里的 `provider_settings.fallback_chat_models` 作为 AI 摘要回退顺序。 |
 | `ai_summary_timezone` | "Asia/Shanghai" | 摘要时区 |
 | `ai_digest_max_articles` | 50 | 每次摘要最大文章数 |
 | `ai_digest_recent_days` | 0 | 仅摘要最近 X 天更新的文章，0 为不限制 |
@@ -99,6 +99,14 @@
 - **`t2i_full_page`**: 是否渲染完整页面
   - `true`: 渲染完整内容页面
   - `false`: 仅渲染视口大小
+
+#### AI 回退来源说明
+
+`astrbot_config_file` 用于指定回退 Provider 列表的来源配置。
+
+- 留空：不启用轮换，仅使用主 Provider
+- 可填写配置名或文件名：例如 `default`、`Local`、`QQ`、`cmd_config.json` 或 `abconf_xxx.json`
+- 如果目标文件不存在或配置项为空，插件会回退到旧的 `ai_fallback_providers` 配置作为兼容兜底
 
 ## 命令列表
 
