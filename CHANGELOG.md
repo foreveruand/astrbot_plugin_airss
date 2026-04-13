@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.2] - 2026-04-13
+
+### Fixed
+- AI digest now marks articles as sent for every subscriber record behind the same UMO
+  - Prevents the same unread articles from reappearing across digest runs when one UMO subscribes to multiple feeds
+  - Keeps per-subscription article tracking scoped to each subscriber's own subscription
+
 ## [1.5.1] - 2026-04-09
 
 ### Fixed

@@ -796,26 +796,38 @@ class RSSScheduler:
         One AI digest is generated for the same article group and sent to all
         related subscribers. After sending, articles are marked as sent per-subscriber.
         """
-        # Build a map of UMO -> Subscriber for all subscribers across subscriptions
-        umo_to_subscriber: dict[str, Subscriber] = {}
+        # Build a map of UMO -> all subscriber records across subscriptions.
+        # One UMO may subscribe to multiple feeds, and each subscription has its
+        # own subscriber id for per-subscription article_sent tracking.
+        umo_to_subscribers: dict[str, list[Subscriber]] = {}
         for sub in subscriptions:
             subscribers = await self.db.get_subscribers(sub.id)
             for sub_obj in subscribers:
-                if sub_obj.umo not in umo_to_subscriber:
-                    umo_to_subscriber[sub_obj.umo] = sub_obj
+                umo_to_subscribers.setdefault(sub_obj.umo, []).append(sub_obj)
 
-        article_ids = [a.id for a in articles if a.id]
+        article_ids_by_subscription: dict[int, list[int]] = {}
+        for article in articles:
+            if article.id:
+                article_ids_by_subscription.setdefault(
+                    article.subscription_id, []
+                ).append(article.id)
 
         output_config = self.config.get("output_config", {})
         t2i_webhook = output_config.get("t2i_webhook_enabled", False)
         t2i_platform = output_config.get("t2i_platform_enabled", False)
 
         # Send to each subscriber
-        for umo, subscriber in umo_to_subscriber.items():
-            if (subscriber.personal_config or {}).get("stop", False):
-                # Still mark as sent even if stopped
-                await self.db.mark_articles_sent_to_subscriber(
-                    subscriber.id, article_ids
+        for umo, subscriber_records in umo_to_subscribers.items():
+            active_subscribers = [
+                subscriber
+                for subscriber in subscriber_records
+                if not (subscriber.personal_config or {}).get("stop", False)
+            ]
+
+            if not active_subscribers:
+                # Still mark as sent even if stopped to prevent stale backlogs.
+                await self._mark_digest_articles_sent(
+                    subscriber_records, article_ids_by_subscription
                 )
                 continue
 
@@ -843,11 +855,26 @@ class RSSScheduler:
                     success = await self._send_to_subscriber(umo, message_chain)
 
             if success:
-                await self.db.mark_articles_sent_to_subscriber(
-                    subscriber.id, article_ids
+                await self._mark_digest_articles_sent(
+                    subscriber_records, article_ids_by_subscription
                 )
             else:
                 logger.warning(f"Failed to send digest to {umo}")
+
+    async def _mark_digest_articles_sent(
+        self,
+        subscribers: list[Subscriber],
+        article_ids_by_subscription: dict[int, list[int]],
+    ) -> None:
+        """Mark digest articles sent for each subscriber's own subscription."""
+        for subscriber in subscribers:
+            article_ids = article_ids_by_subscription.get(
+                subscriber.subscription_id, []
+            )
+            if article_ids:
+                await self.db.mark_articles_sent_to_subscriber(
+                    subscriber.id, article_ids
+                )
 
     async def remove_digest_job(self, group_id: int, time_str: str) -> None:
         """Remove a digest job."""
