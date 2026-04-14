@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.4] - 2026-04-14
+
+### Fixed
+- `ai_digest_recent_days` is now applied when loading unread digest articles
+  - The digest handler now requests recent articles directly from subscriber unread retrieval
+  - `generate_digest()` no longer applies a second filter on top of the retrieved article set
+  - Digest sending and `article_sent` marking now stay aligned with the same filtered article set
+
 ## [1.5.3] - 2026-04-13
 
 ### Changed

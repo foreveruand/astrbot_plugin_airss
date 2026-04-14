@@ -8,7 +8,6 @@ Persona ID format: rss_group_{group_id}
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -70,7 +69,11 @@ class DigestService:
                     continue
                 display_name = conf_info.get("name", "")
                 path_name = Path(conf_info.get("path", "")).name
-                if config_file_name in {display_name, path_name, conf_id} or target_name in {
+                if config_file_name in {
+                    display_name,
+                    path_name,
+                    conf_id,
+                } or target_name in {
                     display_name,
                     path_name,
                     conf_id,
@@ -90,7 +93,9 @@ class DigestService:
         primary_provider = self._get_ai_provider()
         astrbot_config, source_name = self._get_astrbot_config()
         if not astrbot_config:
-            logger.debug("AI fallback providers disabled because astrbot_config_file is empty")
+            logger.debug(
+                "AI fallback providers disabled because astrbot_config_file is empty"
+            )
             return []
 
         provider_settings = astrbot_config.get("provider_settings", {})
@@ -149,16 +154,13 @@ class DigestService:
 
         ai_config = self.config.get("ai_config", {})
         max_articles = ai_config.get("ai_digest_max_articles", 50)
-        recent_days = ai_config.get("ai_digest_recent_days", 0)
         max_input_tokens = ai_config.get("ai_digest_max_input_tokens", 131072)
         max_output_tokens = ai_config.get("ai_digest_max_output_tokens", 8192)
         title_max_len = ai_config.get("ai_digest_title_max_len", 120)
         content_max_len = ai_config.get("ai_digest_content_max_len", 2048)
 
-        filtered_articles = self._filter_recent_articles(articles, recent_days)
-
         trimmed = self._trim_candidates(
-            filtered_articles[:max_articles], title_max_len, content_max_len
+            articles[:max_articles], title_max_len, content_max_len
         )
         if not trimmed:
             return "暂无新文章。", 0
@@ -224,40 +226,6 @@ class DigestService:
                 continue
 
         raise last_exception or RuntimeError("Unexpected error in digest generation")
-
-    def _filter_recent_articles(
-        self, articles: list[RSSArticle], recent_days: int
-    ) -> list[RSSArticle]:
-        """Filter articles to those updated/published within recent_days."""
-        if recent_days <= 0:
-            return articles
-
-        cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days)
-        filtered: list[RSSArticle] = []
-
-        for article in articles:
-            article_time = article.published_at or article.fetched_at
-            if not article_time:
-                continue
-
-            normalized_time = self._normalize_datetime(article_time)
-            if normalized_time >= cutoff:
-                filtered.append(article)
-
-        logger.debug(
-            "Digest recent-days filter applied: kept %d/%d articles within %d day(s)",
-            len(filtered),
-            len(articles),
-            recent_days,
-        )
-        return filtered
-
-    @staticmethod
-    def _normalize_datetime(value: datetime) -> datetime:
-        """Normalize datetime values to timezone-aware UTC."""
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
 
     def _trim_candidates(
         self,

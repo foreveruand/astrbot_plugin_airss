@@ -740,16 +740,22 @@ class RSSScheduler:
                 logger.info(f"No subscriptions in group {group_id}, skipping digest")
                 return
 
+            recent_days = self.config.get("ai_config", {}).get(
+                "ai_digest_recent_days", 0
+            )
+
             # Collect unsent articles per-subscriber, deduplicated by article ID.
             # Must use get_unsent_articles_for_subscriber (checks article_sent table)
             # instead of get_unsent_articles (checks legacy is_sent column, never updated).
+            # The recent-days window is applied here so retrieval, digest input, and sent
+            # marking all operate on the same article set.
             all_articles: list[RSSArticle] = []
             seen_article_ids: set[int] = set()
             for sub in subscriptions:
                 sub_subscribers = await self.db.get_subscribers(sub.id)
                 for subscriber in sub_subscribers:
                     unsent = await self.db.get_unsent_articles_for_subscriber(
-                        sub.id, subscriber.id
+                        sub.id, subscriber.id, recent_days=recent_days
                     )
                     for article in unsent:
                         if article.id not in seen_article_ids:

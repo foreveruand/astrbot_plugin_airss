@@ -33,7 +33,7 @@
 | `astrbot_config_file` | "" | 可选的 AstrBot 配置名或文件名。留空时不启用 AI 摘要轮换，仅使用主 Provider。可直接填写管理面板里的配置名（default）或实际文件名；默认配置对应 `data/cmd_config.json`，通过管理面板创建的配置通常位于 `data/config/abconf_*.json`。填写后将读取该配置里的 `provider_settings.fallback_chat_models` 作为 AI 摘要回退顺序。 |
 | `ai_summary_timezone` | "Asia/Shanghai" | 摘要时区 |
 | `ai_digest_max_articles` | 50 | 每次摘要最大文章数 |
-| `ai_digest_recent_days` | 0 | 仅摘要最近 X 天更新的文章，0 为不限制 |
+| `ai_digest_recent_days` | 0 | 仅获取并摘要最近 X 天更新的未发送文章，0 为不限制；发送与已读标记也以该范围为准 |
 | `ai_digest_max_input_tokens` | 131072 | 最大输入 token 数 |
 | `ai_digest_max_output_tokens` | 8192 | 最大输出 token 数 |
 | `ai_digest_title_max_len` | 120 | 标题最大字符数 |

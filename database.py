@@ -143,6 +143,37 @@ class Database:
         """Build the UTC cutoff datetime for retention checks."""
         return datetime.now(timezone.utc) - timedelta(days=retention_days)
 
+    @staticmethod
+    def _normalize_datetime(value: datetime) -> datetime:
+        """Normalize datetime values to timezone-aware UTC."""
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _filter_recent_articles(
+        self, articles: list[RSSArticle], recent_days: int
+    ) -> list[RSSArticle]:
+        """Filter articles to those updated/published within recent_days."""
+        if recent_days <= 0:
+            return articles
+
+        cutoff = self._retention_cutoff(recent_days)
+        filtered: list[RSSArticle] = []
+        for article in articles:
+            article_time = article.published_at or article.fetched_at
+            if not article_time:
+                continue
+            if self._normalize_datetime(article_time) >= cutoff:
+                filtered.append(article)
+
+        logger.debug(
+            "Digest retrieval recent-days filter applied: kept %d/%d articles within %d day(s)",
+            len(filtered),
+            len(articles),
+            recent_days,
+        )
+        return filtered
+
     async def _migrate_db(self) -> None:
         """Migrate database schema for compatibility with old versions."""
         async with self._acquire() as conn:
@@ -490,7 +521,7 @@ class Database:
             await conn.commit()
 
     async def get_unsent_articles_for_subscriber(
-        self, subscription_id: int, subscriber_id: int
+        self, subscription_id: int, subscriber_id: int, recent_days: int = 0
     ) -> list[RSSArticle]:
         """Get articles not yet sent to a specific subscriber."""
         async with self._acquire() as conn:
@@ -507,7 +538,7 @@ class Database:
                 (subscription_id, subscriber_id),
             )
             rows = await cursor.fetchall()
-            return [
+            articles = [
                 RSSArticle(
                     id=row["id"],
                     subscription_id=row["subscription_id"],
@@ -529,6 +560,7 @@ class Database:
                 )
                 for row in rows
             ]
+            return self._filter_recent_articles(articles, recent_days)
 
     async def mark_all_articles_sent_to_subscriber(
         self, subscription_id: int, subscriber_id: int
