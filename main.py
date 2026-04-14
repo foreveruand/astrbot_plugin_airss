@@ -46,7 +46,7 @@ class Main(star.Star):
 
     async def _init(self) -> None:
         data_path = (
-            Path(get_astrbot_data_path()) / "plugin_data" / "astrbot_plugin_airss"
+            Path(get_astrbot_data_path()) / "plugin_data" / self.name
         )
         data_path.mkdir(parents=True, exist_ok=True)
         db_path = data_path / "rss.db"

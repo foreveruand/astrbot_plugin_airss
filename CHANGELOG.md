@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.5] - 2026-04-14
+
+### Changed
+- RSS article push now sends full article content instead of truncating to 500 characters
+  - Message splitting is delegated to platform adapters (e.g. Telegram 4096 message limit)
+
 ## [1.5.4] - 2026-04-14
 
 ### Fixed

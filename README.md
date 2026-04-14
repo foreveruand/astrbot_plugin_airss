@@ -9,12 +9,13 @@
 - 📂 **分组管理**: 将订阅分组，每个分组可设置不同的推送时间和摘要提示词
 - 👤 **Persona 系统**: 每个分组对应一个 Persona，自定义摘要风格
 - 🎯 **个性化订阅**: 支持仅标题、仅图片、关键词过滤等个性化选项
+- 📝 **全文推送**: 默认推送文章全文，超长消息由平台适配器按平台限制自动分批发送
 - ⏰ **定时推送**: 支持多个推送时间点
 - 🌐 **多平台支持**: 通过 AstrBot 统一消息接口推送
 
 ## 安装方法
 
-1. 将插件文件夹放置在 `data/plugins/astrbot_plugin_rss/`
+1. 将插件文件夹放置在 `data/plugins/astrbot_plugin_airss/`
 2. 安装依赖：
    ```bash
    pip install feedparser aiohttp aiosqlite
@@ -238,7 +239,7 @@
 
 ## 数据存储
 
-- 数据库位置：`data/plugin_data/astrbot_plugin_rss/rss.db`
+- 数据库位置：`data/plugin_data/astrbot_plugin_airss/rss.db`
 - 数据类型：SQLite
 - 表结构：
   - `subscriptions`: 订阅源

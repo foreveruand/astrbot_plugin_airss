@@ -652,10 +652,6 @@ class RSSScheduler:
             message_chain.message(f"📰 **{title}**\n{via_line}")
         else:
             content = article.content or ""
-            max_content_len = 500
-            if len(content) > max_content_len:
-                content = content[:max_content_len] + "..."
-
             message_chain.message(f"📰 **{title}**\n\n{content}\n\n🔗 {via_line}")
 
             if article.image_urls:
@@ -688,10 +684,6 @@ class RSSScheduler:
             return f"📰 **{title}**\nvia {via_line}"
 
         content = article.content or ""
-        max_content_len = 500
-        if len(content) > max_content_len:
-            content = content[:max_content_len] + "..."
-
         text = f"📰 **{title}**\n\n{content}\n\n🔗 via {via_line}"
 
         if article.image_urls:
