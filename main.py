@@ -77,6 +77,7 @@ class Main(star.Star):
             self.db,
             self.scheduler,
             self.config.get("rsshub_config", {}),
+            self.fetcher
         )
 
         await self._init_cleanup_job()

@@ -834,31 +834,29 @@ class RSSUtilCommands:
         db: Database,
         scheduler: RSSScheduler,
         rsshub_config: dict,
+        fetcher: RSSFetcher = None,
     ):
         self.context = context
         self.db = db
         self.scheduler = scheduler
         self.rsshub_config = rsshub_config
+        self.fetcher = fetcher
 
     async def util_rsshub(
         self, event: AstrMessageEvent, path: str | None = None
     ) -> None:
         """Print RSSHub URL."""
-        rsshub_url = self.rsshub_config.get("rsshub_url", "")
-        if not rsshub_url:
+
+        if self.fetcher.rsshub_url:
+            url = self.fetcher.build_rsshub_url(path)
+        else:
             event.set_result(
                 MessageEventResult().message(
-                    "❌ RSSHub URL not configured. Please set rsshub_url in config."
+                    "❌ Please add rsshub_url in plugin settings."
                 )
             )
             return
-        if path:
-            if not path.startswith("/"):
-                path = "/" + path
-            full_url = f"{rsshub_url.rstrip('/')}{path}"
-        else:
-            full_url = rsshub_url.rstrip("/")
-        event.set_result(MessageEventResult().message(f"🔗 RSSHub URL:\n`{full_url}`"))
+        event.set_result(MessageEventResult().message(f"🔗 RSSHub URL:\n`{url}`"))
 
     async def util_test(self, event: AstrMessageEvent, url: str) -> None:
         """Test RSS feed accessibility."""

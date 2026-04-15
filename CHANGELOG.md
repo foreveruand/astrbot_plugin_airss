@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.6] - 2026-04-15
+
+### Added
+- Telegram inline keyboard support for `/rssdel` and `/rssupdate` command selection
+- Enhanced configuration workflow with numbered options (①-⑫) for interactive selection
+- Configuration system with personal and global config separation
+- Improved error handling and fallback mechanisms for AI digest operations
+
 ## [1.5.5] - 2026-04-14
 
 ### Changed
