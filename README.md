@@ -208,6 +208,9 @@
 | `/rssutil test <url>` | 测试 RSS 源可用性 | `/rssutil test https://example.com/feed.xml` |
 | `/rssutil trigger [name\|id]` | 手动触发抓取 | `/rssutil trigger 科技资讯` |
 
+说明：
+- 配置了 `rsshub_config.rsshub_key` 后，`/rssutil rsshub [path]` 与 `/rssadd /path` 都会自动生成带 `code` 参数的完整 RSSHub URL。
+
 ## 个性化配置
 
 订阅者可以为每个订阅设置个性化选项：

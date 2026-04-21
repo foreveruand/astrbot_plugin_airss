@@ -3,10 +3,11 @@ RSS Fetcher - Async RSS feed fetching and parsing.
 """
 
 import asyncio
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import aiohttp
 import feedparser
@@ -40,21 +41,27 @@ class RSSFetcher:
     ):
         self.proxy = proxy
         self.timeout = aiohttp.ClientTimeout(total=timeout)
-        self.rsshub_url = rsshub_url
-        self.rsshub_key = rsshub_key
+        self.rsshub_url = rsshub_url.rstrip("/") if rsshub_url else None
+        self.rsshub_key = rsshub_key.strip() if rsshub_key else None
 
-    def build_rsshub_url(self, path: str) -> str:
+    def build_rsshub_url(self, path: str | None) -> str:
         """Build full RSSHub URL from path."""
+        path = (path or "").strip()
+        route = path.lstrip("/")
         if not self.rsshub_url:
-            return f"https://rsshub.app/{path.lstrip('/')}"
-        elif self.rsshub_key:
-            import hashlib
-            from urllib.parse import quote
+            return f"https://rsshub.app/{route}" if route else "https://rsshub.app"
 
-            encoded_router = quote(f"/{path.lstrip('/')}")
-            code = hashlib.md5(f"{encoded_router}{self.rsshub_key}".encode()).hexdigest()
-            return f"{self.rsshub_url}/{path.lstrip('/')}?code={code}"
-        return urljoin(self.rsshub_url, path)
+        if not route:
+            return self.rsshub_url
+
+        if self.rsshub_key:
+            encoded_router = quote(f"/{route}")
+            code = hashlib.md5(
+                f"{encoded_router}{self.rsshub_key}".encode()
+            ).hexdigest()
+            return f"{self.rsshub_url}/{route}?code={code}"
+
+        return urljoin(f"{self.rsshub_url}/", route)
 
     async def fetch_feed(
         self,

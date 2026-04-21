@@ -45,9 +45,7 @@ class Main(star.Star):
         logger.info("RSS plugin initialized successfully")
 
     async def _init(self) -> None:
-        data_path = (
-            Path(get_astrbot_data_path()) / "plugin_data" / self.name
-        )
+        data_path = Path(get_astrbot_data_path()) / "plugin_data" / self.name
         data_path.mkdir(parents=True, exist_ok=True)
         db_path = data_path / "rss.db"
 
@@ -77,7 +75,7 @@ class Main(star.Star):
             self.db,
             self.scheduler,
             self.config.get("rsshub_config", {}),
-            self.fetcher
+            self.fetcher,
         )
 
         await self._init_cleanup_job()
@@ -507,8 +505,9 @@ class Main(star.Star):
         """Print RSSHub URL. Usage: rssutil rsshub [path]"""
         await self.initialize()
 
-        message = event.message_str.strip()
-        path = message.replace("rssutil rsshub", "").strip() or None
+        message = event.message_str.strip().lstrip("/")
+        parts = self._parse_args(message)
+        path = parts[2] if len(parts) > 2 else None
 
         await self.util_commands.util_rsshub(event, path)
 

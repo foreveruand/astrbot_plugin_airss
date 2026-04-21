@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.7] - 2026-04-21
+
+### Fixed
+- `rssutil rsshub [path]` now parses path arguments robustly and correctly generates `?code=` when `rsshub_key` is configured
+- RSSHub code generation now consistently uses configured `rsshub_key` (removed hardcoded key usage)
+
 ## [1.5.6] - 2026-04-15
 
 ### Added
