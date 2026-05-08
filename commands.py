@@ -19,6 +19,7 @@ from .models import (
     RSSSubscription,
     Subscriber,
 )
+from .persona_utils import ensure_group_persona_for_group
 from .scheduler import RSSScheduler
 
 if TYPE_CHECKING:
@@ -690,18 +691,8 @@ class GroupCommands:
         """Create a new RSS group."""
         group = RSSGroup(name=name)
         group_id = await self.db.add_group(group)
-        # Create persona for the group
-        persona_id = f"rss_group_{group_id}"
-        group.persona_id = persona_id
         group.id = group_id
-        await self.db.update_group(group)
-        # Check if persona already exists
-        existing_persona = self.context.persona_manager.get_persona(persona_id)
-        if not existing_persona:
-            self.context.persona_manager.create_persona(
-                name=persona_id,
-                system_prompt="You are an RSS article summary assistant. Please organize and summarize subscribed articles for users.",
-            )
+        persona_id = await ensure_group_persona_for_group(self.context, self.db, group)
         event.set_result(
             MessageEventResult().message(
                 f"✅ Group created: {name} (ID: {group_id})\nPersona: {persona_id}"

@@ -1,0 +1,1 @@
+"""AstrBot AIRSS plugin package."""

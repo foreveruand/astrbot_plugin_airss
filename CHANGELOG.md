@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-05-08
+
+### Changed
+- AI digest now runs through AstrBot's full main-agent pipeline by default
+  - Added `ai_digest_use_agent` (default `true`)
+  - Added `ai_digest_agent_max_steps` (default `8`)
+  - Added `ai_digest_tool_call_timeout` (default `60`)
+  - Digest provider selection still follows `ai_provider` plus fallback providers from `astrbot_config_file`
+- Digest generation is now scoped by each recipient's visible unread article set instead of one shared group-wide article pool
+  - Recipients only reuse the same digest when their article ID sets are exactly identical
+  - Stopped recipients no longer participate in digest bucketing
+  - Articles are marked as sent only after that recipient successfully receives the digest
+
+### Added
+- RSS group personas are now auto-maintained as `rss_group_{group_id}`
+  - Group creation immediately ensures the persona exists
+  - Digest execution repairs historical groups missing `persona_id`
+  - Auto-created personas default to `tools=None` and `skills=None` so the full Agent tool/skill set is available
+
 ## [1.5.7] - 2026-04-21
 
 ### Fixed

@@ -22,6 +22,7 @@ from astrbot.core.platform.message_session import MessageSession
 from .database import Database
 from .fetcher import RSSFetcher
 from .models import RSSArticle, RSSGroup, RSSSubscription, Subscriber
+from .persona_utils import ensure_group_persona_for_group
 
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
@@ -165,6 +166,23 @@ class RSSScheduler:
     def _is_webhook(self, umo: str) -> bool:
         """Check if UMO is a webhook URL."""
         return umo.startswith("http://") or umo.startswith("https://")
+
+    @staticmethod
+    def _build_digest_bucket_signature(article_ids: list[int]) -> str:
+        """Build a stable signature for a visible article set."""
+        return ",".join(str(article_id) for article_id in sorted(article_ids))
+
+    @staticmethod
+    def _sort_digest_articles(articles: list[RSSArticle]) -> list[RSSArticle]:
+        """Sort digest articles newest first with stable ID tie-breaking."""
+        return sorted(
+            articles,
+            key=lambda article: (
+                article.published_at or article.fetched_at,
+                article.id or 0,
+            ),
+            reverse=True,
+        )
 
     @staticmethod
     def _truncate_by_bytes(text: str, max_bytes: int) -> str:
@@ -732,139 +750,180 @@ class RSSScheduler:
                 logger.info(f"No subscriptions in group {group_id}, skipping digest")
                 return
 
+            await ensure_group_persona_for_group(self.context, self.db, group)
+
             recent_days = self.config.get("ai_config", {}).get(
                 "ai_digest_recent_days", 0
             )
 
-            # Collect unsent articles per-subscriber, deduplicated by article ID.
-            # Must use get_unsent_articles_for_subscriber (checks article_sent table)
-            # instead of get_unsent_articles (checks legacy is_sent column, never updated).
-            # The recent-days window is applied here so retrieval, digest input, and sent
-            # marking all operate on the same article set.
-            all_articles: list[RSSArticle] = []
-            seen_article_ids: set[int] = set()
-            for sub in subscriptions:
-                sub_subscribers = await self.db.get_subscribers(sub.id)
-                for subscriber in sub_subscribers:
-                    unsent = await self.db.get_unsent_articles_for_subscriber(
-                        sub.id, subscriber.id, recent_days=recent_days
-                    )
-                    for article in unsent:
-                        if article.id not in seen_article_ids:
-                            all_articles.append(article)
-                            seen_article_ids.add(article.id)
-
-            if not all_articles:
+            digest_targets = await self._collect_digest_targets(
+                subscriptions, recent_days=recent_days
+            )
+            if not digest_targets:
                 logger.info(f"No new articles for digest in group {group_id}")
                 return
 
-            # Import digest service here to avoid circular import
             from .digest import DigestService
 
             digest_service = DigestService(self.context, self.db, self.config)
+            digest_results: dict[str, str] = {}
+            for signature, target in digest_targets.items():
+                try:
+                    (
+                        digest_content,
+                        trimmed_count,
+                    ) = await digest_service.generate_digest(
+                        target["articles"],
+                        group_id,
+                        article_signature=signature,
+                    )
+                    digest_results[signature] = digest_content
+                    logger.info(
+                        "Generated digest for group %s signature %s with %s articles",
+                        group_id,
+                        signature[:32],
+                        trimmed_count,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Error generating digest for group %s signature %s: %s",
+                        group_id,
+                        signature[:32],
+                        exc,
+                        exc_info=True,
+                    )
 
-            # Generate digest
-            digest_content, trimmed_count = await digest_service.generate_digest(
-                all_articles, group_id
-            )
-
-            # Send to all subscribers
-            await self._send_digest_to_subscribers(
-                group, subscriptions, all_articles, digest_content
-            )
-
-            logger.info(
-                f"Sent digest for group {group_id} with {trimmed_count} articles"
-            )
+            for signature, target in digest_targets.items():
+                digest_content = digest_results.get(signature)
+                if not digest_content:
+                    continue
+                for recipient in target["recipients"]:
+                    success = await self._send_digest_to_recipient(
+                        recipient["umo"],
+                        digest_content,
+                    )
+                    if success:
+                        await self._mark_digest_articles_sent_for_recipient(
+                            recipient["subscribers"],
+                            target["articles"],
+                        )
+                    else:
+                        logger.warning(
+                            "Failed to send digest to %s for group %s signature %s",
+                            recipient["umo"],
+                            group_id,
+                            signature[:32],
+                        )
 
         except Exception as e:
             logger.error(
                 f"Error in digest handler for group {group_id}: {e}", exc_info=True
             )
 
-    async def _send_digest_to_subscribers(
+    async def _collect_digest_targets(
         self,
-        group: RSSGroup,
         subscriptions: list[RSSSubscription],
-        articles: list[RSSArticle],
-        digest_content: str,
-    ) -> None:
-        """Send digest to all subscribers of the group and mark articles as sent.
-
-        One AI digest is generated for the same article group and sent to all
-        related subscribers. After sending, articles are marked as sent per-subscriber.
-        """
-        # Build a map of UMO -> all subscriber records across subscriptions.
-        # One UMO may subscribe to multiple feeds, and each subscription has its
-        # own subscriber id for per-subscription article_sent tracking.
+        recent_days: int,
+    ) -> dict[str, dict]:
+        """Group recipients by the exact article set they can currently see."""
         umo_to_subscribers: dict[str, list[Subscriber]] = {}
-        for sub in subscriptions:
-            subscribers = await self.db.get_subscribers(sub.id)
-            for sub_obj in subscribers:
-                umo_to_subscribers.setdefault(sub_obj.umo, []).append(sub_obj)
+        for subscription in subscriptions:
+            subscribers = await self.db.get_subscribers(subscription.id)
+            for subscriber in subscribers:
+                umo_to_subscribers.setdefault(subscriber.umo, []).append(subscriber)
 
-        article_ids_by_subscription: dict[int, list[int]] = {}
-        for article in articles:
-            if article.id:
-                article_ids_by_subscription.setdefault(
-                    article.subscription_id, []
-                ).append(article.id)
-
-        output_config = self.config.get("output_config", {})
-        t2i_webhook = output_config.get("t2i_webhook_enabled", False)
-        t2i_platform = output_config.get("t2i_platform_enabled", False)
-
-        # Send to each subscriber
+        digest_targets: dict[str, dict] = {}
         for umo, subscriber_records in umo_to_subscribers.items():
             active_subscribers = [
                 subscriber
                 for subscriber in subscriber_records
                 if not (subscriber.personal_config or {}).get("stop", False)
             ]
-
             if not active_subscribers:
-                # Still mark as sent even if stopped to prevent stale backlogs.
-                await self._mark_digest_articles_sent(
-                    subscriber_records, article_ids_by_subscription
-                )
                 continue
 
-            if self._is_webhook(umo):
-                if t2i_webhook:
-                    success = await self._send_webhook_image(umo, digest_content)
-                else:
-                    success = await self._send_webhook(umo, digest_content)
-            else:
-                if t2i_platform:
-                    try:
-                        image_url = await self._render_digest_image(
-                            digest_content, return_url=True
-                        )
-                        message_chain = MessageChain().url_image(image_url)
-                        success = await self._send_to_subscriber(umo, message_chain)
-                    except Exception as e:
-                        logger.warning(
-                            f"Platform t2i render failed for {umo}: {e}, falling back to text"
-                        )
-                        message_chain = MessageChain().message(digest_content)
-                        success = await self._send_to_subscriber(umo, message_chain)
-                else:
-                    message_chain = MessageChain().message(digest_content)
-                    success = await self._send_to_subscriber(umo, message_chain)
-
-            if success:
-                await self._mark_digest_articles_sent(
-                    subscriber_records, article_ids_by_subscription
+            visible_articles: dict[int, RSSArticle] = {}
+            for subscriber in active_subscribers:
+                unsent = await self.db.get_unsent_articles_for_subscriber(
+                    subscriber.subscription_id,
+                    subscriber.id,
+                    recent_days=recent_days,
                 )
-            else:
-                logger.warning(f"Failed to send digest to {umo}")
+                for article in unsent:
+                    if article.id is None:
+                        continue
+                    visible_articles[article.id] = article
 
-    async def _mark_digest_articles_sent(
+            if not visible_articles:
+                continue
+
+            article_ids = sorted(visible_articles)
+            signature = self._build_digest_bucket_signature(article_ids)
+            bucket = digest_targets.setdefault(
+                signature,
+                {
+                    "article_ids": article_ids,
+                    "articles": self._sort_digest_articles(
+                        list(visible_articles.values())
+                    ),
+                    "recipients": [],
+                },
+            )
+            bucket["recipients"].append(
+                {
+                    "umo": umo,
+                    "subscribers": active_subscribers,
+                }
+            )
+
+        return digest_targets
+
+    async def _send_digest_to_recipient(
+        self,
+        umo: str,
+        digest_content: str,
+    ) -> bool:
+        """Send one digest payload to one actual recipient."""
+        output_config = self.config.get("output_config", {})
+        t2i_webhook = output_config.get("t2i_webhook_enabled", False)
+        t2i_platform = output_config.get("t2i_platform_enabled", False)
+
+        if self._is_webhook(umo):
+            if t2i_webhook:
+                return await self._send_webhook_image(umo, digest_content)
+            return await self._send_webhook(umo, digest_content)
+
+        if t2i_platform:
+            try:
+                image_url = await self._render_digest_image(
+                    digest_content, return_url=True
+                )
+                message_chain = MessageChain().url_image(image_url)
+                return await self._send_to_subscriber(umo, message_chain)
+            except Exception as exc:
+                logger.warning(
+                    "Platform t2i render failed for %s: %s, falling back to text",
+                    umo,
+                    exc,
+                )
+
+        message_chain = MessageChain().message(digest_content)
+        return await self._send_to_subscriber(umo, message_chain)
+
+    async def _mark_digest_articles_sent_for_recipient(
         self,
         subscribers: list[Subscriber],
-        article_ids_by_subscription: dict[int, list[int]],
+        articles: list[RSSArticle],
     ) -> None:
-        """Mark digest articles sent for each subscriber's own subscription."""
+        """Mark digest articles sent for one recipient's subscriber records."""
+        article_ids_by_subscription: dict[int, list[int]] = {}
+        for article in articles:
+            if article.id is None:
+                continue
+            article_ids_by_subscription.setdefault(article.subscription_id, []).append(
+                article.id
+            )
+
         for subscriber in subscribers:
             article_ids = article_ids_by_subscription.get(
                 subscriber.subscription_id, []

@@ -28,6 +28,25 @@
         "min": 1,
         "max": 200
       },
+      "ai_digest_use_agent": {
+        "type": "bool",
+        "default": true,
+        "description": "使用完整 AstrBot Agent 生成摘要"
+      },
+      "ai_digest_agent_max_steps": {
+        "type": "int",
+        "default": 8,
+        "description": "摘要 Agent 最大执行步数",
+        "min": 1,
+        "max": 30
+      },
+      "ai_digest_tool_call_timeout": {
+        "type": "int",
+        "default": 60,
+        "description": "摘要 Agent 工具调用超时时间（秒）",
+        "min": 1,
+        "max": 600
+      },
       "ai_digest_recent_days": {
         "type": "int",
         "default": 1,

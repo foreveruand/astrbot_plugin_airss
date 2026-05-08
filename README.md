@@ -38,6 +38,9 @@
 | `astrbot_config_file` | "" | 可选的 AstrBot 配置名或文件名。留空时不启用 AI 摘要轮换，仅使用主 Provider。可直接填写管理面板里的配置名（default）或实际文件名；默认配置对应 `data/cmd_config.json`，通过管理面板创建的配置通常位于 `data/config/abconf_*.json`。填写后将读取该配置里的 `provider_settings.fallback_chat_models` 作为 AI 摘要回退顺序。 |
 | `ai_summary_timezone` | "Asia/Shanghai" | 摘要时区 |
 | `ai_digest_max_articles` | 50 | 每次摘要最大文章数 |
+| `ai_digest_use_agent` | true | 使用完整 AstrBot Agent 生成摘要，默认开启 |
+| `ai_digest_agent_max_steps` | 8 | 摘要 Agent 最大执行步数 |
+| `ai_digest_tool_call_timeout` | 60 | 摘要 Agent 工具调用超时时间（秒） |
 | `ai_digest_recent_days` | 0 | 仅获取并摘要最近 X 天更新的未发送文章，0 为不限制；发送与已读标记也以该范围为准 |
 | `ai_digest_max_input_tokens` | 131072 | 最大输入 token 数 |
 | `ai_digest_max_output_tokens` | 8192 | 最大输出 token 数 |
@@ -234,6 +237,9 @@
 
 每个分组对应一个 Persona，ID 格式为 `rss_group_{group_id}`。
 
+创建分组或执行 digest 时，插件会自动确保该 Persona 存在；如果历史数据缺少 `persona_id`，也会在 digest 时自动修复。
+自动创建的人格默认使用 `tools=None`、`skills=None`，也就是允许该摘要 Agent 访问当前 AstrBot 已启用的全部工具和 Skills。
+
 可以通过 AstrBot 的 Persona 管理功能自定义每个分组的摘要风格：
 - 在 AstrBot 管理面板中找到 Persona 设置
 - 创建或编辑 `rss_group_{id}` 的 Persona
@@ -241,8 +247,16 @@
 
 默认提示词：
 ```
-你是一个RSS文章摘要助手，请为用户整理和总结订阅的文章。
+你是 RSS 分组摘要 Agent，请优先基于提供的 RSS 内容整理摘要，必要时再调用工具或 Skills 补充关键信息。
 ```
+
+## Digest 行为说明
+
+- AI digest 默认通过完整 AstrBot main-agent 链路执行，不再直接调用 `llm_generate()`
+- 摘要按“每个接收者当前可见的未发送文章集合”生成，不再固定为“每个分组只生成一份公共摘要”
+- 只有当多个接收者的文章 ID 集合完全一致时，才会复用同一份摘要
+- `stop` 状态的接收者不会参与摘要生成，也不会影响其他接收者的分桶结果
+- 只有当摘要成功发送给某个接收者后，才会标记该接收者对应的文章为已发送
 
 ## 数据存储
 
