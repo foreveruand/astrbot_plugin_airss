@@ -238,7 +238,7 @@
 每个分组对应一个 Persona，ID 格式为 `rss_group_{group_id}`。
 
 创建分组或执行 digest 时，插件会自动确保该 Persona 存在；如果历史数据缺少 `persona_id`，也会在 digest 时自动修复。
-自动创建的人格默认使用 `tools=None`、`skills=None`，也就是允许该摘要 Agent 访问当前 AstrBot 已启用的全部工具和 Skills。
+自动创建的人格默认使用 `tools=None`、`skills=None`。摘要 Agent 会沿用 AstrBot 主 Agent 的工具装配逻辑；如果你在 Persona 里显式勾选了某些工具，插件会在 cron 摘要场景中预先补齐这些工具，并按当前生效配置补齐 Web Search 工具。
 
 可以通过 AstrBot 的 Persona 管理功能自定义每个分组的摘要风格：
 - 在 AstrBot 管理面板中找到 Persona 设置
@@ -253,6 +253,7 @@
 ## Digest 行为说明
 
 - AI digest 默认通过完整 AstrBot main-agent 链路执行，不再直接调用 `llm_generate()`
+- cron 摘要运行结束后会自动删除它创建的临时对话，不会长期堆积在对话数据列表中
 - 摘要按“每个接收者当前可见的未发送文章集合”生成，不再固定为“每个分组只生成一份公共摘要”
 - 只有当多个接收者的文章 ID 集合完全一致时，才会复用同一份摘要
 - `stop` 状态的接收者不会参与摘要生成，也不会影响其他接收者的分桶结果

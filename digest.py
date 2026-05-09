@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from astrbot.core.agent.tool import ToolSet
 from astrbot.core.astr_main_agent import MainAgentBuildConfig, build_main_agent
 from astrbot.core.cron.events import CronMessageEvent
 from astrbot.core.platform.message_session import MessageSession
@@ -338,31 +339,38 @@ class DigestService:
             group_id=group_id,
             article_signature=article_signature,
         )
-        req = ProviderRequest(
-            prompt=self._build_agent_prompt(articles),
-            contexts=[],
-            system_prompt="",
-            conversation=conversation,
-        )
+        try:
+            req = ProviderRequest(
+                prompt=self._build_agent_prompt(articles),
+                contexts=[],
+                system_prompt="",
+                conversation=conversation,
+            )
+            await self._prepare_digest_agent_tools(req, session_umo, group_id)
 
-        build_result = await build_main_agent(
-            event=cron_event,
-            plugin_context=self.context,
-            config=self._build_main_agent_config(session_umo),
-            provider=provider,
-            req=req,
-        )
-        if not build_result:
-            raise RuntimeError("Failed to build main agent for digest generation")
+            build_result = await build_main_agent(
+                event=cron_event,
+                plugin_context=self.context,
+                config=self._build_main_agent_config(session_umo),
+                provider=provider,
+                req=req,
+            )
+            if not build_result:
+                raise RuntimeError("Failed to build main agent for digest generation")
 
-        max_steps = self._get_ai_config().get("ai_digest_agent_max_steps", 8)
-        async for _ in build_result.agent_runner.step_until_done(max_steps):
-            pass
+            max_steps = self._get_ai_config().get("ai_digest_agent_max_steps", 8)
+            async for _ in build_result.agent_runner.step_until_done(max_steps):
+                pass
 
-        llm_resp = build_result.agent_runner.get_final_llm_resp()
-        if not llm_resp or not (llm_resp.completion_text or "").strip():
-            raise RuntimeError("Digest agent returned an empty response")
-        return llm_resp.completion_text.strip()
+            llm_resp = build_result.agent_runner.get_final_llm_resp()
+            if not llm_resp or not (llm_resp.completion_text or "").strip():
+                raise RuntimeError("Digest agent returned an empty response")
+            return llm_resp.completion_text.strip()
+        finally:
+            await self.context.conversation_manager.delete_conversation(
+                session_umo,
+                conversation.conversation_id,
+            )
 
     async def _prepare_digest_conversation(
         self,
@@ -435,6 +443,61 @@ class DigestService:
             subagent_orchestrator=astrbot_config.get("subagent_orchestrator", {}),
             timezone=astrbot_config.get("timezone"),
         )
+
+    async def _prepare_digest_agent_tools(
+        self,
+        req: ProviderRequest,
+        session_umo: str,
+        group_id: int,
+    ) -> None:
+        """Preload tool selections for cron digests before the main agent expands them."""
+        persona_id = await ensure_group_persona(self.context, self.db, group_id)
+        persona = await self.context.persona_manager.get_persona(persona_id)
+
+        req.func_tool = req.func_tool or ToolSet()
+        tool_mgr = self.context.get_llm_tool_manager()
+
+        persona_tools = getattr(persona, "tools", None)
+        if isinstance(persona_tools, list):
+            for tool_name in persona_tools:
+                if not isinstance(tool_name, str) or not tool_name:
+                    continue
+                tool = tool_mgr.get_func(tool_name)
+                if tool and getattr(tool, "active", True):
+                    req.func_tool.add_tool(tool)
+
+        self._apply_effective_web_search_tools(req, session_umo)
+
+    def _apply_effective_web_search_tools(
+        self,
+        req: ProviderRequest,
+        session_umo: str,
+    ) -> None:
+        """Inject web-search tools from the effective AstrBot config for cron sessions."""
+        provider_settings = self._get_effective_astrbot_config(session_umo).get(
+            "provider_settings",
+            {},
+        )
+        if not provider_settings.get("web_search", False):
+            return
+
+        tool_mgr = self.context.get_llm_tool_manager()
+        provider = provider_settings.get("websearch_provider", "tavily")
+        tool_names_by_provider = {
+            "tavily": ["web_search_tavily", "tavily_extract_web_page"],
+            "bocha": ["web_search_bocha"],
+            "brave": ["web_search_brave"],
+            "firecrawl": [
+                "web_search_firecrawl",
+                "firecrawl_extract_web_page",
+            ],
+            "baidu_ai_search": ["web_search_baidu"],
+        }
+
+        for tool_name in tool_names_by_provider.get(provider, []):
+            tool = tool_mgr.get_func(tool_name)
+            if tool and getattr(tool, "active", True):
+                req.func_tool.add_tool(tool)
 
     async def _get_persona_system_prompt(self, group_id: int) -> str:
         persona_id = await ensure_group_persona(self.context, self.db, group_id)

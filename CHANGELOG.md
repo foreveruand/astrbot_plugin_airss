@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.1] - 2026-05-09
+
+### Fixed
+- AI digest cron agents now preload persona-selected tools before entering AstrBot's main-agent loop
+  - Fixes cases where explicitly selected tools such as `fetch_url` were missing from the digest agent tool list
+- AI digest cron agents now preload the effective Web Search tools from the configured AstrBot profile
+  - Fixes missing built-in search tools such as Tavily in scheduled digest runs
+- Temporary digest cron conversations are now deleted after each summary run
+  - Prevents the conversation list from accumulating many empty `cron` sessions
+
 ## [1.6.0] - 2026-05-08
 
 ### Changed
