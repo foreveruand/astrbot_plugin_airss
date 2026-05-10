@@ -35,7 +35,7 @@
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `ai_provider` | "" | AI Provider ID，为空则使用会话默认 |
-| `astrbot_config_file` | "" | 可选的 AstrBot 配置名或文件名。留空时不启用 AI 摘要轮换，仅使用主 Provider。可直接填写管理面板里的配置名（default）或实际文件名；默认配置对应 `data/cmd_config.json`，通过管理面板创建的配置通常位于 `data/config/abconf_*.json`。填写后将读取该配置里的 `provider_settings.fallback_chat_models` 作为 AI 摘要回退顺序。 |
+| `astrbot_config_file` | "" | 可选的 AstrBot 配置名或文件名。留空时不启用 AI 摘要轮换，仅使用主 Provider。可直接填写管理面板里的配置名（default）或实际文件名；默认配置对应 `data/cmd_config.json`，通过管理面板创建的配置通常位于 `data/config/abconf_*.json`。填写后将读取该配置里的 `provider_settings.fallback_chat_models` 作为 AI 摘要回退顺序。当前仅在模型不存在、模型端点不存在等“模型/链接错误”时才会触发回退。 |
 | `ai_summary_timezone` | "Asia/Shanghai" | 摘要时区 |
 | `ai_digest_max_articles` | 50 | 每次摘要最大文章数 |
 | `ai_digest_use_agent` | true | 使用完整 AstrBot Agent 生成摘要，默认开启 |
@@ -114,7 +114,7 @@
 
 - 留空：不启用轮换，仅使用主 Provider
 - 可填写配置名或文件名：例如 `default`、`Local`、`QQ`、`cmd_config.json` 或 `abconf_xxx.json`
-- 如果目标文件不存在或配置项为空，插件会回退到旧的 `ai_fallback_providers` 配置作为兼容兜底
+- 当前仅在可识别的模型或端点链接错误时才会轮换到回退 Provider；插件内部异常、会话对象异常等非模型错误会直接抛出，避免无意义消耗请求
 
 ## 命令列表
 

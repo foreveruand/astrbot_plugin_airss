@@ -3,10 +3,10 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from astrbot.core.agent.tool import ToolSet
-
 from astrbot_plugin_airss.digest import DigestService
 from astrbot_plugin_airss.models import RSSArticle
+
+from astrbot.core.agent.tool import ToolSet
 
 
 def _make_article(article_id: int) -> RSSArticle:
@@ -50,7 +50,7 @@ async def test_generate_digest_with_agent_retries_fallbacks(monkeypatch):
         }
     }
     service = DigestService(context, MagicMock(), config)
-    run_mock = AsyncMock(side_effect=[RuntimeError("boom"), "digest ok"])
+    run_mock = AsyncMock(side_effect=[Exception("model not found"), "digest ok"])
     monkeypatch.setattr(service, "_run_agent_digest", run_mock)
     monkeypatch.setattr(
         "astrbot_plugin_airss.digest.ensure_group_persona",
@@ -68,6 +68,78 @@ async def test_generate_digest_with_agent_retries_fallbacks(monkeypatch):
         "primary",
         "fallback-a",
     ]
+
+
+@pytest.mark.asyncio
+async def test_generate_digest_with_agent_does_not_fallback_on_non_provider_error(
+    monkeypatch,
+):
+    service = DigestService(
+        MagicMock(),
+        MagicMock(),
+        {
+            "ai_config": {
+                "ai_provider": "primary",
+                "astrbot_config_file": "default",
+                "ai_digest_use_agent": True,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_all_providers",
+        lambda session_umo=None: ["primary", "fallback-a"],
+    )
+    monkeypatch.setattr(
+        "astrbot_plugin_airss.digest.ensure_group_persona",
+        AsyncMock(return_value="rss_group_1"),
+    )
+    run_mock = AsyncMock(side_effect=AttributeError("conversation_id missing"))
+    monkeypatch.setattr(service, "_run_agent_digest", run_mock)
+
+    with pytest.raises(AttributeError, match="conversation_id missing"):
+        await service._generate_digest_with_agent(
+            [_make_article(1)],
+            group_id=1,
+            article_signature="1",
+        )
+
+    assert [call.kwargs["provider_id"] for call in run_mock.await_args_list] == [
+        "primary"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_digest_with_llm_retries_on_model_link_error(monkeypatch):
+    context = MagicMock()
+    service = DigestService(
+        context,
+        MagicMock(),
+        {"ai_config": {"ai_provider": "primary", "astrbot_config_file": "default"}},
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_all_providers",
+        lambda session_umo=None: ["primary", "fallback-a"],
+    )
+    monkeypatch.setattr(
+        service,
+        "_get_persona_system_prompt",
+        AsyncMock(return_value="system"),
+    )
+
+    not_found = Exception("Model not found for endpoint")
+    context.llm_generate = AsyncMock(
+        side_effect=[
+            not_found,
+            MagicMock(completion_text="digest ok"),
+        ]
+    )
+
+    result = await service._generate_digest_with_llm([_make_article(1)], group_id=1)
+
+    assert result == "digest ok"
+    assert context.llm_generate.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -170,4 +242,40 @@ async def test_run_agent_digest_deletes_temp_conversation(monkeypatch):
     context.conversation_manager.delete_conversation.assert_awaited_once_with(
         "cron:FriendMessage:test",
         "conv-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_agent_digest_deletes_temp_conversation_with_legacy_cid(
+    monkeypatch,
+):
+    context = MagicMock()
+    context.get_provider_by_id.return_value = MagicMock()
+    context.conversation_manager.delete_conversation = AsyncMock()
+
+    service = DigestService(context, MagicMock(), {"ai_config": {}})
+    monkeypatch.setattr("astrbot_plugin_airss.digest.Provider", object)
+    monkeypatch.setattr(service, "_prepare_digest_agent_tools", AsyncMock())
+    monkeypatch.setattr(
+        service,
+        "_prepare_digest_conversation",
+        AsyncMock(return_value=MagicMock(cid="legacy-conv-1")),
+    )
+    monkeypatch.setattr(
+        "astrbot_plugin_airss.digest.build_main_agent",
+        AsyncMock(return_value=None),
+    )
+
+    with pytest.raises(RuntimeError, match="Failed to build main agent"):
+        await service._run_agent_digest(
+            articles=[_make_article(1)],
+            group_id=1,
+            article_signature="1",
+            provider_id="primary",
+            session_umo="cron:FriendMessage:test",
+        )
+
+    context.conversation_manager.delete_conversation.assert_awaited_once_with(
+        "cron:FriendMessage:test",
+        "legacy-conv-1",
     )

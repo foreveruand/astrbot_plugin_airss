@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.2] - 2026-05-10
+
+### Fixed
+- AI digest cron cleanup now supports both AstrBot conversation object shapes
+  - Prevents crashes such as `'Conversation' object has no attribute 'conversation_id'`
+- AI digest provider fallback is now restricted to model or endpoint-link errors
+  - Avoids rotating to fallback providers for plugin/runtime errors and wasting requests
+
 ## [1.6.1] - 2026-05-09
 
 ### Fixed

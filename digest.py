@@ -148,6 +148,77 @@ class DigestService:
             return selected_config
         return self.context.get_config(umo=session_umo)
 
+    @staticmethod
+    def _extract_error_texts(exc: Exception) -> list[str]:
+        texts: list[str] = []
+
+        def _append(value: object) -> None:
+            if value is None:
+                return
+            text = str(value).strip()
+            if text and text not in texts:
+                texts.append(text)
+
+        _append(exc)
+
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            error_obj = body.get("error")
+            _append(body)
+            if isinstance(error_obj, dict):
+                for key in ("message", "type", "code", "param"):
+                    _append(error_obj.get(key))
+        else:
+            _append(body)
+
+        response = getattr(exc, "response", None)
+        if response is not None:
+            _append(getattr(response, "text", None))
+
+        return texts
+
+    @classmethod
+    def _should_fallback_for_provider_error(cls, exc: Exception) -> bool:
+        """Only rotate providers for model or endpoint-link errors."""
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        candidates = " \n ".join(
+            text.lower() for text in cls._extract_error_texts(exc) if text
+        )
+
+        patterns = (
+            r"\bmodel\b.{0,40}\bnot found\b",
+            r"\bnot found\b.{0,40}\bmodel\b",
+            r"\bunknown model\b",
+            r"\binvalid model\b",
+            r"\bunsupported model\b",
+            r"\bno endpoints? found\b",
+            r"\bendpoint\b.{0,40}\bnot found\b",
+            r"\bapi[_\s-]*base\b.{0,40}\bnot found\b",
+            r"\bbase url\b.{0,40}\bnot found\b",
+            r"\bdoes not exist\b.{0,40}\bmodel\b",
+            r"\bmodel\b.{0,40}\bdoes not exist\b",
+        )
+
+        if any(re.search(pattern, candidates) for pattern in patterns):
+            return True
+
+        if status_code == 404 and any(
+            keyword in candidates
+            for keyword in ("model", "endpoint", "api_base", "base url", "base_url")
+        ):
+            return True
+
+        return False
+
+    @staticmethod
+    def _get_conversation_id(conversation: object) -> str | None:
+        for attr in ("conversation_id", "cid"):
+            value = getattr(conversation, attr, None)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
     async def generate_digest(
         self,
         articles: list[RSSArticle],
@@ -243,6 +314,8 @@ class DigestService:
                     provider_id,
                     exc,
                 )
+                if not is_last and not self._should_fallback_for_provider_error(exc):
+                    raise
                 if is_last:
                     logger.error(
                         "All %d provider(s) failed for digest generation",
@@ -294,6 +367,8 @@ class DigestService:
                     provider_id,
                     exc,
                 )
+                if not is_last and not self._should_fallback_for_provider_error(exc):
+                    raise
                 if is_last:
                     logger.error(
                         "All %d provider(s) failed for agent digest generation",
@@ -367,10 +442,12 @@ class DigestService:
                 raise RuntimeError("Digest agent returned an empty response")
             return llm_resp.completion_text.strip()
         finally:
-            await self.context.conversation_manager.delete_conversation(
-                session_umo,
-                conversation.conversation_id,
-            )
+            conversation_id = self._get_conversation_id(conversation)
+            if conversation_id:
+                await self.context.conversation_manager.delete_conversation(
+                    session_umo,
+                    conversation_id,
+                )
 
     async def _prepare_digest_conversation(
         self,
