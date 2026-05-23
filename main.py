@@ -584,7 +584,7 @@ class Main(star.Star):
 
     @rssgroup.command("time")
     async def rssgroup_time(self, event: AstrMessageEvent) -> None:
-        """Manage digest schedule. Usage: rssgroup time <group_id> add/del <HH:MM>"""
+        """Manage digest schedule. Usage: rssgroup time <group_id> add/del <schedule>"""
         await self.initialize()
 
         message = event.message_str.strip()
@@ -593,7 +593,7 @@ class Main(star.Star):
         if len(parts) < 3:
             event.set_result(
                 event.make_result().message(
-                    "Usage: /rssgroup time <group_id> add/del <HH:MM>"
+                    "Usage: /rssgroup time <group_id> add/del <HH:MM|cron>"
                 )
             )
             return
@@ -611,7 +611,8 @@ class Main(star.Star):
             )
             return
 
-        await self.group_commands.group_time(event, group_id, subcmd, parts[2])
+        schedule_str = " ".join(parts[2:])
+        await self.group_commands.group_time(event, group_id, subcmd, schedule_str)
 
     @filter.command_group("rsssub")
     def rsssub(self) -> None:

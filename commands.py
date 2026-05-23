@@ -3,7 +3,6 @@ Command handlers for RSS plugin.
 """
 
 import logging
-import re
 from typing import TYPE_CHECKING
 
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
@@ -743,20 +742,19 @@ class GroupCommands:
         event: AstrMessageEvent,
         group_id: int,
         subcmd: str,
-        time_str: str,
+        schedule_str: str,
     ) -> None:
         """Manage digest schedule for a group.
 
         Args:
             subcmd: "add" or "del"
-            time_str: Time in HH:MM format
+            schedule_str: Daily HH:MM time or 5-field cron expression
         """
-        # Validate time format
-        if not re.match(r"^\d{1,2}:\d{2}$", time_str):
+        try:
+            normalized_schedule = self.scheduler.normalize_digest_schedule(schedule_str)
+        except ValueError as exc:
             event.set_result(
-                MessageEventResult().message(
-                    "❌ Invalid time format. Use HH:MM (e.g., 09:00)"
-                )
+                MessageEventResult().message(f"❌ Invalid schedule: {exc}")
             )
             return
 
@@ -767,45 +765,73 @@ class GroupCommands:
             )
             return
 
+        existing_schedule = next(
+            (
+                stored_schedule
+                for stored_schedule in group.schedules
+                if self._normalize_schedule_for_compare(stored_schedule)
+                == normalized_schedule
+            ),
+            None,
+        )
+
         if subcmd == "add":
-            if time_str in group.schedules:
+            if existing_schedule is not None:
                 event.set_result(
                     MessageEventResult().message(
-                        f"ℹ️ Schedule {time_str} already exists for group {group.name}"
+                        f"ℹ️ Schedule {normalized_schedule} already exists for group {group.name}"
                     )
                 )
                 return
 
-            group.schedules.append(time_str)
+            group.schedules.append(normalized_schedule)
             await self.db.update_group(group)
 
-            # Schedule the digest job
-            await self.scheduler.schedule_digest(group, time_str)
+            try:
+                await self.scheduler.schedule_digest(group, normalized_schedule)
+            except Exception as exc:
+                group.schedules.remove(normalized_schedule)
+                await self.db.update_group(group)
+                event.set_result(
+                    MessageEventResult().message(
+                        f"❌ Failed to add schedule {normalized_schedule}: {exc}"
+                    )
+                )
+                return
 
             event.set_result(
                 MessageEventResult().message(
-                    f"✅ Added schedule {time_str} to group {group.name}"
+                    f"✅ Added schedule {normalized_schedule} to group {group.name}"
                 )
             )
         elif subcmd == "del":
-            if time_str not in group.schedules:
+            if existing_schedule is None:
                 event.set_result(
                     MessageEventResult().message(
-                        f"❌ Schedule {time_str} not found in group {group.name}"
+                        f"❌ Schedule {normalized_schedule} not found in group {group.name}"
                     )
                 )
                 return
 
-            group.schedules.remove(time_str)
+            group.schedules.remove(existing_schedule)
             await self.db.update_group(group)
 
-            # Remove the digest job
-            if group.id is not None:
-                await self.scheduler.remove_digest_job(group.id, time_str)
+            try:
+                if group.id is not None:
+                    await self.scheduler.remove_digest_job(group.id, existing_schedule)
+            except Exception as exc:
+                group.schedules.append(existing_schedule)
+                await self.db.update_group(group)
+                event.set_result(
+                    MessageEventResult().message(
+                        f"❌ Failed to remove schedule {normalized_schedule}: {exc}"
+                    )
+                )
+                return
 
             event.set_result(
                 MessageEventResult().message(
-                    f"✅ Removed schedule {time_str} from group {group.name}"
+                    f"✅ Removed schedule {normalized_schedule} from group {group.name}"
                 )
             )
         else:
@@ -814,6 +840,12 @@ class GroupCommands:
                     "❌ Invalid subcommand. Use 'add' or 'del'"
                 )
             )
+
+    def _normalize_schedule_for_compare(self, schedule: str) -> str:
+        try:
+            return self.scheduler.normalize_digest_schedule(schedule)
+        except ValueError:
+            return " ".join(schedule.strip().split())
 
 
 class RSSUtilCommands:

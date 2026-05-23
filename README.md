@@ -10,7 +10,7 @@
 - 👤 **Persona 系统**: 每个分组对应一个 Persona，自定义摘要风格
 - 🎯 **个性化订阅**: 支持仅标题、仅图片、关键词过滤等个性化选项
 - 📝 **全文推送**: 默认推送文章全文，超长消息由平台适配器按平台限制自动分批发送
-- ⏰ **定时推送**: 支持多个推送时间点
+- ⏰ **定时推送**: 支持多个推送时间点，也支持 5 段 cron 表达式
 - 🌐 **多平台支持**: 通过 AstrBot 统一消息接口推送
 - 🎮 **交互优化**: 支持 Telegram 内联键盘操作，便捷配置管理
 - 🔢 **配置编号**: 提供编号系统 (①-⑫)，直观进行配置选择和修改
@@ -190,8 +190,12 @@
 | `/rssgroup add <name>` | 创建分组 | `/rssgroup add 科技资讯` |
 | `/rssgroup rename <id> <name>` | 重命名分组 | `/rssgroup rename 1 科技` |
 | `/rssgroup list` | 列出所有分组 | `/rssgroup list` |
-| `/rssgroup time <id> add <HH:MM>` | 添加推送时间 | `/rssgroup time 1 add 09:00` |
-| `/rssgroup time <id> del <HH:MM>` | 删除推送时间 | `/rssgroup time 1 del 09:00` |
+| `/rssgroup time <id> add <HH:MM\|cron>` | 添加推送时间 | `/rssgroup time 1 add 09:00` |
+| `/rssgroup time <id> del <HH:MM\|cron>` | 删除推送时间 | `/rssgroup time 1 del 09:00` |
+
+说明：
+- 继续支持原有 `HH:MM` 配置，等价于“每天该时间触发”
+- 也支持标准 5 段 cron 表达式，例如 `/rssgroup time 1 add 0 9 * * 1-5`
 
 ### 订阅者命令
 

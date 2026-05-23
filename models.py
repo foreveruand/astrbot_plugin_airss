@@ -76,7 +76,7 @@ class RSSGroup:
 
     id: int | None = None
     name: str = ""
-    schedules: list[str] = field(default_factory=list)  # HH:MM format
+    schedules: list[str] = field(default_factory=list)  # HH:MM or 5-field cron
     persona_id: str | None = None
 
 

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from astrbot_plugin_airss.commands import GroupCommands
 from astrbot_plugin_airss.models import RSSArticle, RSSGroup, Subscriber
 from astrbot_plugin_airss.persona_utils import ensure_group_persona_for_group
 from astrbot_plugin_airss.scheduler import RSSScheduler
@@ -101,3 +102,54 @@ async def test_collect_digest_targets_groups_by_visible_articles():
     assert [recipient["umo"] for recipient in targets["1,2,3"]["recipients"]] == [
         "u2"
     ]
+
+
+def test_normalize_digest_schedule_supports_legacy_time_and_cron():
+    assert RSSScheduler.normalize_digest_schedule("9:05") == "09:05"
+    assert RSSScheduler.normalize_digest_schedule(" 0 9 * * 1-5 ") == "0 9 * * 1-5"
+
+
+def test_normalize_digest_schedule_rejects_invalid_values():
+    with pytest.raises(ValueError):
+        RSSScheduler.normalize_digest_schedule("25:00")
+
+    with pytest.raises(ValueError):
+        RSSScheduler.normalize_digest_schedule("0 9 * *")
+
+
+def test_schedule_to_cron_keeps_cron_and_expands_daily_time():
+    scheduler = RSSScheduler(MagicMock(), MagicMock(), MagicMock(), {})
+
+    assert scheduler._schedule_to_cron("09:05") == "5 9 * * *"
+    assert scheduler._schedule_to_cron("0 9 * * 1-5") == "0 9 * * 1-5"
+
+
+def test_make_digest_job_name_is_backward_compatible_for_daily_time():
+    scheduler = RSSScheduler(MagicMock(), MagicMock(), MagicMock(), {})
+
+    assert scheduler._make_digest_job_name(3, "09:05") == "rss_digest_3_09_05"
+    assert scheduler._make_digest_job_name(3, "0 9 * * 1-5").startswith(
+        "rss_digest_3_cron_"
+    )
+
+
+@pytest.mark.asyncio
+async def test_group_time_adds_cron_schedule_with_normalized_storage():
+    context = MagicMock()
+    db = MagicMock()
+    scheduler = MagicMock()
+    scheduler.normalize_digest_schedule = RSSScheduler.normalize_digest_schedule
+    scheduler.schedule_digest = AsyncMock()
+    group_commands = GroupCommands(context, db, scheduler)
+    event = MagicMock()
+    event.set_result = MagicMock()
+    db.get_group = AsyncMock(return_value=RSSGroup(id=1, name="news", schedules=[]))
+    db.update_group = AsyncMock()
+
+    await group_commands.group_time(event, 1, "add", "0 9 * * 1-5")
+
+    stored_group = db.get_group.await_args_list[0]
+    assert stored_group is not None
+    updated_group = db.update_group.await_args.args[0]
+    assert updated_group.schedules == ["0 9 * * 1-5"]
+    scheduler.schedule_digest.assert_awaited_once_with(updated_group, "0 9 * * 1-5")

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.3] - 2026-05-23
+
+### Changed
+- Digest group schedules now accept either legacy daily `HH:MM` values or 5-field cron expressions
+  - Existing daily schedules continue to work without migration
+  - `/rssgroup time <id> add/del ...` now accepts cron strings such as `0 9 * * 1-5`
+
 ## [1.6.2] - 2026-05-10
 
 ### Fixed

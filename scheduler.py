@@ -150,6 +150,7 @@ class RSSScheduler:
 
     JOB_PREFIX_FETCH = "rss_fetch_"
     JOB_PREFIX_DIGEST = "rss_digest_"
+    _TIME_SCHEDULE_RE = re.compile(r"^\d{1,2}:\d{2}$")
 
     def __init__(
         self,
@@ -413,8 +414,15 @@ class RSSScheduler:
         return f"{self.JOB_PREFIX_FETCH}{subscription_id}"
 
     def _make_digest_job_name(self, group_id: int, schedule: str) -> str:
-        safe_schedule = schedule.replace(":", "_")
-        return f"{self.JOB_PREFIX_DIGEST}{group_id}_{safe_schedule}"
+        normalized_schedule = self.normalize_digest_schedule(schedule)
+        if self._is_daily_time_schedule(normalized_schedule):
+            safe_schedule = normalized_schedule.replace(":", "_")
+            return f"{self.JOB_PREFIX_DIGEST}{group_id}_{safe_schedule}"
+
+        schedule_hash = hashlib.sha1(normalized_schedule.encode("utf-8")).hexdigest()[
+            :12
+        ]
+        return f"{self.JOB_PREFIX_DIGEST}{group_id}_cron_{schedule_hash}"
 
     def _interval_to_cron(self, interval_minutes: int) -> str:
         """Convert interval in minutes to cron expression."""
@@ -423,11 +431,92 @@ class RSSScheduler:
             return f"0 */{hours} * * *"
         return f"*/{interval_minutes} * * * *"
 
-    def _schedule_to_cron(self, time_str: str) -> str:
-        """Convert HH:MM to cron expression for daily execution."""
-        parts = time_str.split(":")
-        hour = int(parts[0]) if len(parts) > 0 else 0
-        minute = int(parts[1]) if len(parts) > 1 else 0
+    @classmethod
+    def _is_daily_time_schedule(cls, schedule: str) -> bool:
+        return bool(cls._TIME_SCHEDULE_RE.fullmatch(schedule))
+
+    @staticmethod
+    def _is_valid_cron_field(field: str, min_value: int, max_value: int) -> bool:
+        for chunk in field.split(","):
+            if not chunk:
+                return False
+
+            base = chunk
+            if "/" in chunk:
+                base, step = chunk.split("/", 1)
+                if not step.isdigit() or int(step) <= 0:
+                    return False
+
+            if base == "*":
+                continue
+
+            if "-" in base:
+                start_text, end_text = base.split("-", 1)
+                if not start_text.isdigit() or not end_text.isdigit():
+                    return False
+                start = int(start_text)
+                end = int(end_text)
+                if start > end or start < min_value or end > max_value:
+                    return False
+                continue
+
+            if not base.isdigit():
+                return False
+
+            value = int(base)
+            if value < min_value or value > max_value:
+                return False
+
+        return True
+
+    @classmethod
+    def _is_valid_cron_schedule(cls, schedule: str) -> bool:
+        fields = schedule.split()
+        if len(fields) != 5:
+            return False
+
+        ranges = (
+            (0, 59),
+            (0, 23),
+            (1, 31),
+            (1, 12),
+            (0, 7),
+        )
+        return all(
+            cls._is_valid_cron_field(field, min_value, max_value)
+            for field, (min_value, max_value) in zip(fields, ranges, strict=True)
+        )
+
+    @classmethod
+    def normalize_digest_schedule(cls, schedule: str) -> str:
+        normalized = " ".join(schedule.strip().split())
+        if not normalized:
+            raise ValueError("Schedule cannot be empty")
+
+        if cls._is_daily_time_schedule(normalized):
+            hour_text, minute_text = normalized.split(":")
+            hour = int(hour_text)
+            minute = int(minute_text)
+            if hour > 23 or minute > 59:
+                raise ValueError("Daily time must be in HH:MM format")
+            return f"{hour:02d}:{minute:02d}"
+
+        if cls._is_valid_cron_schedule(normalized):
+            return normalized
+
+        raise ValueError(
+            "Schedule must be HH:MM or a 5-field cron expression like '0 9 * * *'"
+        )
+
+    def _schedule_to_cron(self, schedule: str) -> str:
+        """Convert a schedule string to a cron expression."""
+        normalized_schedule = self.normalize_digest_schedule(schedule)
+        if not self._is_daily_time_schedule(normalized_schedule):
+            return normalized_schedule
+
+        hour_text, minute_text = normalized_schedule.split(":")
+        hour = int(hour_text)
+        minute = int(minute_text)
         return f"{minute} {hour} * * *"
 
     async def _delete_job_by_name(self, job_name: str) -> None:
@@ -715,25 +804,26 @@ class RSSScheduler:
         await self._delete_job_by_name(job_name)
 
     async def schedule_digest(self, group: RSSGroup, time_str: str) -> None:
-        """Schedule a digest job for a group at specific time."""
-        job_name = self._make_digest_job_name(group.id, time_str)
+        """Schedule a digest job for a group at a daily time or cron expression."""
+        normalized_schedule = self.normalize_digest_schedule(time_str)
+        job_name = self._make_digest_job_name(group.id, normalized_schedule)
 
         await self._delete_job_by_name(job_name)
 
-        cron_expr = self._schedule_to_cron(time_str)
+        cron_expr = self._schedule_to_cron(normalized_schedule)
 
         await self.context.cron_manager.add_basic_job(
             name=job_name,
             cron_expression=cron_expr,
             timezone="Asia/Shanghai",
             handler=self._digest_handler,
-            payload={"group_id": group.id, "schedule": time_str},
-            description=f"RSS分组摘要推送: {group.name} @ {time_str}",
+            payload={"group_id": group.id, "schedule": normalized_schedule},
+            description=f"RSS分组摘要推送: {group.name} @ {normalized_schedule}",
             persistent=True,
         )
 
         logger.info(
-            f"Scheduled digest job for group {group.id} ({group.name}) at {time_str}"
+            f"Scheduled digest job for group {group.id} ({group.name}) at {normalized_schedule}"
         )
 
     async def _digest_handler(self, group_id: int, schedule: str) -> None:
