@@ -257,6 +257,7 @@
 ## Digest 行为说明
 
 - AI digest 默认通过完整 AstrBot main-agent 链路执行，不再直接调用 `llm_generate()`
+- 摘要 Agent 会沿用当前 AstrBot 的上下文压缩配置字段（如 `llm_compress_keep_recent_ratio`）
 - cron 摘要运行结束后会自动删除它创建的临时对话，不会长期堆积在对话数据列表中
 - 摘要按“每个接收者当前可见的未发送文章集合”生成，不再固定为“每个分组只生成一份公共摘要”
 - 只有当多个接收者的文章 ID 集合完全一致时，才会复用同一份摘要

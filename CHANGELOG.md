@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.4] - 2026-06-04
+
+### Fixed
+- AI digest Agent config now uses AstrBot's current `llm_compress_keep_recent_ratio` setting
+  - Fixes `MainAgentBuildConfig.__init__() got an unexpected keyword argument 'llm_compress_keep_recent'` on recent AstrBot versions
+
 ## [1.6.3] - 2026-05-23
 
 ### Changed

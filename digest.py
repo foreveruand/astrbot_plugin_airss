@@ -494,8 +494,8 @@ class DigestService:
             llm_compress_instruction=provider_settings.get(
                 "llm_compress_instruction", ""
             ),
-            llm_compress_keep_recent=provider_settings.get(
-                "llm_compress_keep_recent", 6
+            llm_compress_keep_recent_ratio=provider_settings.get(
+                "llm_compress_keep_recent_ratio", 0.15
             ),
             llm_compress_provider_id=provider_settings.get(
                 "llm_compress_provider_id", ""

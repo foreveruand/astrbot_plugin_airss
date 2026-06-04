@@ -158,6 +158,24 @@ async def test_generate_digest_respects_agent_switch(monkeypatch):
     llm_mock.assert_not_called()
 
 
+def test_build_main_agent_config_uses_current_compress_ratio_key(monkeypatch):
+    service = DigestService(MagicMock(), MagicMock(), {"ai_config": {}})
+    monkeypatch.setattr(
+        service,
+        "_get_effective_astrbot_config",
+        lambda session_umo: {
+            "provider_settings": {
+                "llm_compress_keep_recent": 6,
+                "llm_compress_keep_recent_ratio": 0.2,
+            }
+        },
+    )
+
+    config = service._build_main_agent_config("cron:FriendMessage:test")
+
+    assert config.llm_compress_keep_recent_ratio == 0.2
+
+
 @pytest.mark.asyncio
 async def test_prepare_digest_agent_tools_includes_persona_and_web_search_tools(
     monkeypatch,
