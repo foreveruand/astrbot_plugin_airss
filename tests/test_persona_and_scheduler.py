@@ -5,7 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from astrbot_plugin_airss.commands import GroupCommands
-from astrbot_plugin_airss.models import RSSArticle, RSSGroup, Subscriber
+from astrbot_plugin_airss.main import Main
+from astrbot_plugin_airss.models import (
+    RSSArticle,
+    RSSGroup,
+    RSSSubscription,
+    Subscriber,
+)
 from astrbot_plugin_airss.persona_utils import ensure_group_persona_for_group
 from astrbot_plugin_airss.scheduler import RSSScheduler
 
@@ -57,14 +63,31 @@ def _make_article(article_id: int, subscription_id: int) -> RSSArticle:
     )
 
 
+def test_command_parsing_preserves_argument_text():
+    main = Main.__new__(Main)
+
+    assert main._strip_command("/rssdel Tech rssdel Feed", "rssdel") == (
+        "Tech rssdel Feed"
+    )
+    assert main._strip_command("/rssadd https://example.com/rss My Feed", "rssadd") == (
+        "https://example.com/rss My Feed"
+    )
+
+
+def test_update_config_number_scope_distinguishes_global_black_keyword():
+    assert Main._resolve_update_config_key("⑥") == ("black_keyword", "personal")
+    assert Main._resolve_update_config_key("⑫") == ("black_keyword", "global")
+    assert Main._resolve_update_config_key("black_keyword") == ("black_keyword", None)
+
+
 @pytest.mark.asyncio
 async def test_collect_digest_targets_groups_by_visible_articles():
     context = MagicMock()
     db = MagicMock()
     scheduler = RSSScheduler(context, db, MagicMock(), {})
 
-    sub1 = MagicMock(id=1)
-    sub2 = MagicMock(id=2)
+    sub1 = RSSSubscription(id=1)
+    sub2 = RSSSubscription(id=2)
 
     u1s1 = Subscriber(id=11, subscription_id=1, umo="u1")
     u1s2 = Subscriber(id=12, subscription_id=2, umo="u1")
@@ -83,7 +106,9 @@ async def test_collect_digest_targets_groups_by_visible_articles():
             2: [u1s2, u2s2],
         }[subscription_id]
 
-    async def get_unsent(subscription_id: int, subscriber_id: int, recent_days: int = 0):
+    async def get_unsent(
+        subscription_id: int, subscriber_id: int, recent_days: int = 0
+    ):
         mapping = {
             (1, 11): [_make_article(1, 1)],
             (2, 12): [_make_article(2, 2)],
@@ -99,9 +124,39 @@ async def test_collect_digest_targets_groups_by_visible_articles():
 
     assert set(targets) == {"1,2", "1,2,3"}
     assert [recipient["umo"] for recipient in targets["1,2"]["recipients"]] == ["u1"]
-    assert [recipient["umo"] for recipient in targets["1,2,3"]["recipients"]] == [
-        "u2"
-    ]
+    assert [recipient["umo"] for recipient in targets["1,2,3"]["recipients"]] == ["u2"]
+
+
+@pytest.mark.asyncio
+async def test_collect_digest_targets_applies_subscriber_filters():
+    context = MagicMock()
+    db = MagicMock()
+    scheduler = RSSScheduler(context, db, MagicMock(), {})
+
+    subscription = RSSSubscription(id=1, black_keyword="blocked")
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"only_has_pic": True},
+    )
+    blocked = _make_article(1, 1)
+    blocked.title = "blocked title"
+    no_image = _make_article(2, 1)
+    visible = _make_article(3, 1)
+    visible.image_urls = ["https://example.com/image.jpg"]
+
+    db.get_subscribers = AsyncMock(return_value=[subscriber])
+    db.get_unsent_articles_for_subscriber = AsyncMock(
+        return_value=[blocked, no_image, visible]
+    )
+    db.mark_articles_sent_to_subscriber = AsyncMock()
+
+    targets = await scheduler._collect_digest_targets([subscription], recent_days=0)
+
+    assert set(targets) == {"3"}
+    assert [article.id for article in targets["3"]["articles"]] == [3]
+    db.mark_articles_sent_to_subscriber.assert_awaited_once_with(11, [1, 2])
 
 
 def test_normalize_digest_schedule_supports_legacy_time_and_cron():
@@ -131,6 +186,20 @@ def test_make_digest_job_name_is_backward_compatible_for_daily_time():
     assert scheduler._make_digest_job_name(3, "0 9 * * 1-5").startswith(
         "rss_digest_3_cron_"
     )
+
+
+@pytest.mark.asyncio
+async def test_schedule_subscription_fetch_removes_job_when_stopped():
+    context = MagicMock()
+    context.cron_manager.list_jobs = AsyncMock(return_value=[])
+    context.cron_manager.add_basic_job = AsyncMock()
+    scheduler = RSSScheduler(context, MagicMock(), MagicMock(), {})
+
+    await scheduler.schedule_subscription_fetch(
+        RSSSubscription(id=5, name="paused", stop=True)
+    )
+
+    context.cron_manager.add_basic_job.assert_not_called()
 
 
 @pytest.mark.asyncio

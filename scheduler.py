@@ -226,6 +226,67 @@ class RSSScheduler:
 
         return filtered_articles
 
+    def _remove_configured_content(
+        self, articles: list[RSSArticle], pattern: str | None
+    ) -> list[RSSArticle]:
+        """Apply subscription content removal regex before storing articles."""
+        if not pattern:
+            return articles
+
+        try:
+            compiled_pattern = re.compile(pattern)
+        except re.error as exc:
+            logger.warning("Invalid content_to_remove regex %r: %s", pattern, exc)
+            return articles
+
+        for article in articles:
+            if article.content:
+                article.content = compiled_pattern.sub("", article.content)
+        return articles
+
+    @staticmethod
+    def _article_matches_keywords(article: RSSArticle, black_keyword: str) -> bool:
+        keywords = [k.strip() for k in black_keyword.split(",") if k.strip()]
+        if not keywords:
+            return False
+
+        title_lower = (article.title or "").lower()
+        content_lower = (article.content or "").lower()
+        return any(
+            keyword.lower() in title_lower or keyword.lower() in content_lower
+            for keyword in keywords
+        )
+
+    def _filter_articles_for_subscriber(
+        self,
+        articles: list[RSSArticle],
+        subscriber: Subscriber,
+        subscription: RSSSubscription,
+    ) -> tuple[list[RSSArticle], list[int]]:
+        """Apply subscriber-visible article filters and return skipped article IDs."""
+        from .models import get_effective_bool, get_effective_text
+
+        visible_articles: list[RSSArticle] = []
+        skipped_article_ids: list[int] = []
+        black_keyword = get_effective_text(subscriber, "black_keyword", subscription)
+        only_has_pic = get_effective_bool(subscriber, "only_has_pic", subscription)
+
+        for article in articles:
+            should_skip = False
+            if black_keyword and self._article_matches_keywords(article, black_keyword):
+                should_skip = True
+            elif only_has_pic and not article.image_urls:
+                should_skip = True
+
+            if should_skip:
+                if article.id is not None:
+                    skipped_article_ids.append(article.id)
+                continue
+
+            visible_articles.append(article)
+
+        return visible_articles, skipped_article_ids
+
     async def _send_webhook(
         self,
         webhook_url: str,
@@ -530,9 +591,20 @@ class RSSScheduler:
 
     async def schedule_subscription_fetch(self, subscription: RSSSubscription) -> None:
         """Schedule or update fetch job for a subscription."""
+        if subscription.id is None:
+            return
+
         job_name = self._make_fetch_job_name(subscription.id)
 
         await self._delete_job_by_name(job_name)
+
+        if subscription.stop:
+            logger.info(
+                "Subscription %s (%s) is stopped; fetch job removed",
+                subscription.id,
+                subscription.name,
+            )
+            return
 
         cron_expr = self._interval_to_cron(subscription.interval)
 
@@ -579,6 +651,7 @@ class RSSScheduler:
 
                 subscription.stop = True
                 await self.db.update_subscription(subscription)
+                await self.remove_subscription_job(subscription.id)
 
                 subscribers = await self.db.get_subscribers(subscription.id)
                 for subscriber in subscribers:
@@ -587,7 +660,7 @@ class RSSScheduler:
 
                     message = MessageChain().message(
                         f"⚠️ 订阅 **{subscription.name}** 已因连续 {max_error_count} 次抓取失败而停止。\n"
-                        f"请检查订阅源是否正常，或使用 `/rsstrigger {subscription.id}` 手动触发恢复。"
+                        f"请检查订阅源是否正常，或使用 `/rssutil trigger {subscription.id}` 手动触发恢复。"
                     )
                     await self._send_to_subscriber(subscriber.umo, message)
 
@@ -598,6 +671,7 @@ class RSSScheduler:
                 etag=subscription.etag,
                 last_modified=subscription.last_modified,
                 cookies=subscription.cookies,
+                enable_proxy=subscription.enable_proxy,
             )
 
             if not result.success:
@@ -607,6 +681,9 @@ class RSSScheduler:
             else:
                 result.articles = self._filter_expired_articles(
                     result.articles, retention_days
+                )
+                result.articles = self._remove_configured_content(
+                    result.articles, subscription.content_to_remove
                 )
                 subscription.etag = result.etag
                 subscription.last_modified = result.last_modified
@@ -650,7 +727,7 @@ class RSSScheduler:
         Gets unsent articles for each subscriber from database and sends
         with personalization applied.
         """
-        from .models import get_effective_bool, get_effective_text
+        from .models import get_effective_bool
 
         subscribers = await self.db.get_subscribers(subscription.id)
         if not subscribers:
@@ -666,34 +743,17 @@ class RSSScheduler:
             if not articles:
                 continue
 
+            articles, skipped_article_ids = self._filter_articles_for_subscriber(
+                articles, subscriber, subscription
+            )
+            if skipped_article_ids:
+                await self.db.mark_articles_sent_to_subscriber(
+                    subscriber.id, skipped_article_ids
+                )
+            if not articles:
+                continue
+
             for article in articles:
-                black_keyword = get_effective_text(
-                    subscriber, "black_keyword", subscription
-                )
-                if black_keyword:
-                    keywords = [
-                        k.strip() for k in black_keyword.split(",") if k.strip()
-                    ]
-                    title_lower = (article.title or "").lower()
-                    content_lower = (article.content or "").lower()
-                    if any(
-                        kw.lower() in title_lower or kw.lower() in content_lower
-                        for kw in keywords
-                    ):
-                        await self.db.mark_articles_sent_to_subscriber(
-                            subscriber.id, [article.id]
-                        )
-                        continue
-
-                only_has_pic = get_effective_bool(
-                    subscriber, "only_has_pic", subscription
-                )
-                if only_has_pic and not article.image_urls:
-                    await self.db.mark_articles_sent_to_subscriber(
-                        subscriber.id, [article.id]
-                    )
-                    continue
-
                 only_title = get_effective_bool(subscriber, "only_title", subscription)
                 only_pic = get_effective_bool(subscriber, "only_pic", subscription)
                 enable_spoiler = get_effective_bool(
@@ -916,8 +976,15 @@ class RSSScheduler:
         recent_days: int,
     ) -> dict[str, dict]:
         """Group recipients by the exact article set they can currently see."""
+        subscription_by_id = {
+            subscription.id: subscription
+            for subscription in subscriptions
+            if subscription.id is not None
+        }
         umo_to_subscribers: dict[str, list[Subscriber]] = {}
         for subscription in subscriptions:
+            if subscription.id is None:
+                continue
             subscribers = await self.db.get_subscribers(subscription.id)
             for subscriber in subscribers:
                 umo_to_subscribers.setdefault(subscriber.umo, []).append(subscriber)
@@ -934,12 +1001,24 @@ class RSSScheduler:
 
             visible_articles: dict[int, RSSArticle] = {}
             for subscriber in active_subscribers:
+                subscription = subscription_by_id.get(subscriber.subscription_id)
+                if subscription is None:
+                    continue
                 unsent = await self.db.get_unsent_articles_for_subscriber(
                     subscriber.subscription_id,
                     subscriber.id,
                     recent_days=recent_days,
                 )
-                for article in unsent:
+                filtered_articles, skipped_article_ids = (
+                    self._filter_articles_for_subscriber(
+                        unsent, subscriber, subscription
+                    )
+                )
+                if skipped_article_ids:
+                    await self.db.mark_articles_sent_to_subscriber(
+                        subscriber.id, skipped_article_ids
+                    )
+                for article in filtered_articles:
                     if article.id is None:
                         continue
                     visible_articles[article.id] = article

@@ -5,9 +5,10 @@ RSS Fetcher - Async RSS feed fetching and parsing.
 import asyncio
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urlsplit
 
 import aiohttp
 import feedparser
@@ -15,6 +16,9 @@ import feedparser
 from .models import RSSArticle
 
 logger = logging.getLogger("astrbot")
+
+RSSHUB_PATH_SAFE_CHARS = "/:@!$&'()*+,;="
+PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
 
 
 @dataclass
@@ -35,19 +39,40 @@ class RSSFetcher:
     def __init__(
         self,
         proxy: str | None = None,
+        proxy_enabled: bool = False,
         timeout: int = 30,
         rsshub_url: str | None = None,
         rsshub_key: str | None = None,
     ):
         self.proxy = proxy
+        self.proxy_enabled = proxy_enabled
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.rsshub_url = rsshub_url.rstrip("/") if rsshub_url else None
         self.rsshub_key = rsshub_key.strip() if rsshub_key else None
 
+    @staticmethod
+    def _quote_route_path(path: str) -> str:
+        """Quote raw path characters while preserving existing percent escapes."""
+        escapes: list[str] = []
+
+        def stash_escape(match: re.Match) -> str:
+            escapes.append(match.group(0))
+            return f"__RSSHUB_PCT_{len(escapes) - 1}__"
+
+        protected_path = PERCENT_ESCAPE_RE.sub(stash_escape, path)
+        quoted_path = quote(protected_path, safe=RSSHUB_PATH_SAFE_CHARS)
+
+        for index, escape in enumerate(escapes):
+            quoted_path = quoted_path.replace(f"__RSSHUB_PCT_{index}__", escape)
+
+        return quoted_path
+
     def build_rsshub_url(self, path: str | None) -> str:
         """Build full RSSHub URL from path."""
         path = (path or "").strip()
-        route = path.lstrip("/")
+        parsed_path = urlsplit(path)
+        route = self._quote_route_path(parsed_path.path.lstrip("/"))
+        query = parsed_path.query
         if not self.rsshub_url:
             return f"https://rsshub.app/{route}" if route else "https://rsshub.app"
 
@@ -55,13 +80,12 @@ class RSSFetcher:
             return self.rsshub_url
 
         if self.rsshub_key:
-            encoded_router = quote(f"/{route}")
-            code = hashlib.md5(
-                f"{encoded_router}{self.rsshub_key}".encode()
-            ).hexdigest()
-            return f"{self.rsshub_url}/{route}?code={code}"
+            request_path = f"/{route}"
+            code = hashlib.md5(f"{request_path}{self.rsshub_key}".encode()).hexdigest()
+            query = f"{query}&code={code}" if query else f"code={code}"
 
-        return urljoin(f"{self.rsshub_url}/", route)
+        query_suffix = f"?{query}" if query else ""
+        return f"{self.rsshub_url}/{route}{query_suffix}"
 
     async def fetch_feed(
         self,
@@ -69,6 +93,7 @@ class RSSFetcher:
         etag: str | None = None,
         last_modified: str | None = None,
         cookies: str | None = None,
+        enable_proxy: bool | None = None,
     ) -> FetchResult:
         """
         Fetch and parse an RSS feed.
@@ -78,6 +103,7 @@ class RSSFetcher:
             etag: Previous ETag for conditional request
             last_modified: Previous Last-Modified for conditional request
             cookies: Cookie string
+            enable_proxy: Whether to use configured proxy for this request
 
         Returns:
             FetchResult with articles and metadata
@@ -90,7 +116,8 @@ class RSSFetcher:
         if cookies:
             headers["Cookie"] = cookies
 
-        proxy = self.proxy if self.proxy else None
+        use_proxy = self.proxy_enabled if enable_proxy is None else enable_proxy
+        proxy = self.proxy if self.proxy and use_proxy else None
 
         try:
             async with aiohttp.ClientSession(timeout=self.timeout) as session:

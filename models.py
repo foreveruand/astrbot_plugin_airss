@@ -21,6 +21,8 @@ GLOBAL_CONFIGURABLE_FIELDS = [
     "max_image_number",
     "interval",
     "ai_summary_enabled",
+    "enable_proxy",
+    "stop",
     "source_group_id",
 ]
 

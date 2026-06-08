@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.6] - 2026-06-08
+
+### Fixed
+- RSSHub `code` generation now matches current RSSHub access-key validation
+  - Calculates MD5 from the final URL pathname plus `rsshub_key`
+  - Preserves existing percent escapes such as `%2F` instead of double-encoding them
+  - Encodes raw special characters before signing and appends `code` correctly when the route already has query parameters
+
+## [1.6.5] - 2026-06-08
+
+### Fixed
+- Command parsing now preserves argument text instead of removing command words from later arguments
+  - `/rssadd` keeps the full optional name after the URL
+  - `/rssdel` can match subscription names containing spaces
+  - `/rssupdate` keeps multi-word configuration values
+- Global update config now recognizes `enable_proxy`, `stop`, and numbered `⑫ black_keyword`
+  - `⑥ black_keyword` remains personal config, while `⑫ black_keyword` targets global config for admins
+  - Telegram config callbacks now enforce admin permission before changing global fields
+- New subscriptions now read `fetch_config.default_interval` and inherit `proxy_config.enable_proxy`
+- The schema default for `ai_digest_recent_days` now matches documented behavior (`0`, unlimited)
+- The stopped-subscription warning now points to `/rssutil trigger` instead of the removed `/rsstrigger`
+
+### Changed
+- Stopped subscriptions remove their fetch cron job instead of keeping a no-op scheduled handler
+- Manual "trigger all" fetches now use `fetch_config.max_concurrent_fetches` for bounded concurrency
+- AI digest collection now applies subscriber `black_keyword` and `only_has_pic` filters before generating summaries
+- `content_to_remove` is applied before storing fetched articles
+- Per-subscription `enable_proxy` now controls whether that feed uses the configured proxy
+
 ## [1.6.4] - 2026-06-04
 
 ### Fixed

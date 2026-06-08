@@ -2,6 +2,7 @@
 Command handlers for RSS plugin.
 """
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -43,6 +44,8 @@ GLOBAL_CONFIG_DESCRIPTIONS = {
     "max_image_number": "每篇文章最大图片数，0 为不限制",
     "interval": "抓取间隔（分钟）",
     "ai_summary_enabled": "是否启用 AI 摘要",
+    "enable_proxy": "是否使用代理抓取该订阅",
+    "stop": "暂停整个订阅源抓取",
     "source_group_id": "所属分组 ID，用于定时摘要推送",
 }
 # Boolean fields that can be toggled
@@ -72,6 +75,22 @@ GLOBAL_CONFIG_INT_FIELDS = [
     "interval",
     "source_group_id",
 ]
+
+
+async def _trigger_subscriptions(
+    scheduler: RSSScheduler, subscriptions: list[RSSSubscription]
+) -> None:
+    fetch_config = scheduler.config.get("fetch_config", {})
+    limit = fetch_config.get("max_concurrent_fetches", 5)
+    semaphore = asyncio.Semaphore(limit)
+
+    async def trigger_one(subscription: RSSSubscription) -> None:
+        if subscription.id is None:
+            return
+        async with semaphore:
+            await scheduler._fetch_subscription_handler(subscription.id)
+
+    await asyncio.gather(*(trigger_one(sub) for sub in subscriptions))
 
 
 class RSSCommands:
@@ -167,12 +186,17 @@ class RSSCommands:
             else:
                 name = url.split("/")[-1] or "Untitled"
         # Create subscription
-        config = self.context.get_config() or {}
-        interval = config.get("default_interval", 5)
+        config = self.scheduler.config or {}
+        fetch_config = config.get("fetch_config", {})
+        proxy_config = config.get("proxy_config", {})
+        interval = fetch_config.get(
+            "default_interval", config.get("default_interval", 5)
+        )
         subscription = RSSSubscription(
             name=name,
             url=url,
             interval=interval,
+            enable_proxy=proxy_config.get("enable_proxy", False),
         )
         sub_id = await self.db.add_subscription(subscription)
         subscription.id = sub_id
@@ -663,9 +687,7 @@ class RSSCommands:
             )
         else:
             all_subs = await self.db.get_all_subscriptions()
-            for sub in all_subs:
-                if sub.id is not None:
-                    await self.scheduler._fetch_subscription_handler(sub.id)
+            await _trigger_subscriptions(self.scheduler, all_subs)
             event.set_result(
                 MessageEventResult().message(
                     f"✅ Triggered fetch for all {len(all_subs)} subscriptions"
@@ -887,7 +909,12 @@ class RSSUtilCommands:
 
         from .fetcher import RSSFetcher
 
-        proxy_config = getattr(self.scheduler.fetcher, "proxy", None)
+        fetcher = self.scheduler.fetcher
+        proxy_config = (
+            getattr(fetcher, "proxy", None)
+            if getattr(fetcher, "proxy_enabled", False)
+            else None
+        )
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -978,9 +1005,7 @@ class RSSUtilCommands:
             )
         else:
             all_subs = await self.db.get_all_subscriptions()
-            for sub in all_subs:
-                if sub.id is not None:
-                    await self.scheduler._fetch_subscription_handler(sub.id)
+            await _trigger_subscriptions(self.scheduler, all_subs)
             event.set_result(
                 MessageEventResult().message(
                     f"✅ Triggered fetch for all {len(all_subs)} subscriptions"

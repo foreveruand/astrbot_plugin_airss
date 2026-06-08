@@ -53,11 +53,11 @@ class Main(star.Star):
         await self.db.init_db()
 
         proxy_config = self.config.get("proxy_config", {})
+        fetch_config = self.config.get("fetch_config", {})
         self.fetcher = RSSFetcher(
-            proxy=proxy_config.get("proxy")
-            if proxy_config.get("enable_proxy")
-            else None,
-            timeout=30,
+            proxy=proxy_config.get("proxy") or None,
+            proxy_enabled=proxy_config.get("enable_proxy", False),
+            timeout=fetch_config.get("request_timeout", 30),
             rsshub_url=self.config.get("rsshub_config", {}).get("rsshub_url"),
             rsshub_key=self.config.get("rsshub_config", {}).get("rsshub_key"),
         )
@@ -118,6 +118,27 @@ class Main(star.Star):
         parts = message.strip().split()
         return parts if parts else []
 
+    def _strip_command(self, message: str, command: str) -> str:
+        """Return text after the matched command without touching arguments."""
+        text = message.strip()
+        if text.startswith("/"):
+            text = text[1:]
+        if text == command:
+            return ""
+        if text.startswith(f"{command} "):
+            return text[len(command) :].strip()
+        return text
+
+    @staticmethod
+    def _resolve_update_config_key(raw_key: str) -> tuple[str, str | None]:
+        """Resolve numbered config keys and return an optional forced scope."""
+        from .models import CONFIG_NUMBER_MAP, GLOBAL_CONFIG_NUMBERS
+
+        if raw_key in CONFIG_NUMBER_MAP:
+            scope = "global" if raw_key in GLOBAL_CONFIG_NUMBERS else "personal"
+            return CONFIG_NUMBER_MAP[raw_key], scope
+        return raw_key, None
+
     @filter.command("rssadd")
     async def rssadd(self, event: AstrMessageEvent) -> None:
         """Add an RSS subscription.
@@ -128,7 +149,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        args_text = message.replace("rssadd", "").strip()
+        args_text = self._strip_command(message, "rssadd")
         parts = self._parse_args(args_text)
         if not parts:
             event.set_result(
@@ -140,7 +161,7 @@ class Main(star.Star):
 
         # Parse URL and optional name
         url = parts[0]
-        name = parts[1] if len(parts) > 1 else None
+        name = " ".join(parts[1:]) if len(parts) > 1 else None
         await self.rss_commands.rssadd(event, url, name)
 
     @filter.command("rssdel")
@@ -153,7 +174,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        args_text = message.replace("rssdel", "").strip()
+        args_text = self._strip_command(message, "rssdel")
         parts = self._parse_args(args_text)
 
         # On Telegram, show keyboard when no args provided
@@ -166,7 +187,7 @@ class Main(star.Star):
             return
 
         # Normal flow: delete subscription
-        name_or_id = parts[0]
+        name_or_id = args_text
         await self.rss_commands.rssdel(event, name_or_id)
 
     @filter.command("rsslist")
@@ -189,7 +210,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        args_text = message.replace("rssupdate", "").strip()
+        args_text = self._strip_command(message, "rssupdate")
         parts = self._parse_args(args_text)
 
         if not parts and event.get_platform_name() == "telegram":
@@ -272,7 +293,7 @@ class Main(star.Star):
 
         name_or_id = parts[0]
         config_key_or_value = parts[1] if len(parts) > 1 else None
-        config_value = parts[2] if len(parts) > 2 else None
+        config_value = " ".join(parts[2:]) if len(parts) > 2 else None
 
         if len(parts) == 2 and config_key_or_value:
             from .models import CONFIG_NAME_MAP, CONFIG_NUMBER_MAP
@@ -281,17 +302,20 @@ class Main(star.Star):
             is_config_name = config_key_or_value in CONFIG_NAME_MAP
 
             if is_config_number or is_config_name:
-                config_key = CONFIG_NUMBER_MAP.get(
-                    config_key_or_value, config_key_or_value
+                config_key, forced_scope = self._resolve_update_config_key(
+                    config_key_or_value
                 )
-                await self._handle_mode_c(event, name_or_id, config_key)
+                await self._handle_mode_c(event, name_or_id, config_key, forced_scope)
                 return
 
         config_key = config_key_or_value
 
         # Mode D: Full parameters - direct config modification
         if len(parts) >= 3 and config_key and config_value:
-            await self._handle_mode_d(event, name_or_id, config_key, config_value)
+            config_key, forced_scope = self._resolve_update_config_key(config_key)
+            await self._handle_mode_d(
+                event, name_or_id, config_key, config_value, forced_scope
+            )
             return
 
         await self.rss_commands.rssupdate(event, name_or_id, config_key, config_value)
@@ -302,6 +326,7 @@ class Main(star.Star):
         name_or_id: str,
         config_key: str,
         config_value: str,
+        forced_scope: str | None = None,
     ) -> None:
         """Handle Mode D: Direct config modification with full parameters.
 
@@ -311,15 +336,7 @@ class Main(star.Star):
             config_key: Configuration key (name or number).
             config_value: New value for the configuration.
         """
-        from .models import (
-            CONFIG_NUMBER_MAP,
-            GLOBAL_CONFIGURABLE_FIELDS,
-            PERSONAL_CONFIG_KEYS,
-        )
-
-        # Resolve config key from number if needed
-        if config_key in CONFIG_NUMBER_MAP:
-            config_key = CONFIG_NUMBER_MAP[config_key]
+        from .models import GLOBAL_CONFIGURABLE_FIELDS, PERSONAL_CONFIG_KEYS
 
         # Parse subscription identifier
         subscription = await self._parse_subscription_identifier(name_or_id)
@@ -335,8 +352,10 @@ class Main(star.Star):
 
         # Check permissions
         is_admin = event.role in ("admin", "superuser")
-        is_personal = config_key in PERSONAL_CONFIG_KEYS
-        is_global = config_key in GLOBAL_CONFIGURABLE_FIELDS
+        key_is_personal = config_key in PERSONAL_CONFIG_KEYS
+        key_is_global = config_key in GLOBAL_CONFIGURABLE_FIELDS
+        is_personal = key_is_personal and forced_scope != "global"
+        is_global = key_is_global and forced_scope != "personal"
 
         # Personal config: must be subscriber
         if is_personal and not subscriber:
@@ -346,11 +365,18 @@ class Main(star.Star):
             return
 
         # Global config: must be admin
-        if is_global and not is_personal and not is_admin:
+        if is_global and not is_admin:
             event.set_result(MessageEventResult().message("❌ 全局配置需要管理员权限"))
             return
 
-        if not is_personal and not is_global:
+        if (
+            forced_scope == "personal"
+            and not key_is_personal
+            or forced_scope == "global"
+            and not key_is_global
+            or not is_personal
+            and not is_global
+        ):
             event.set_result(
                 MessageEventResult().message(
                     f"❌ 未知的配置项: `{config_key}`\n"
@@ -392,6 +418,14 @@ class Main(star.Star):
             return
 
         new_value = parsed_value
+
+        if is_global and config_key == "source_group_id" and isinstance(new_value, int):
+            group = await self.db.get_group(new_value)
+            if not group:
+                event.set_result(
+                    MessageEventResult().message(f"❌ Group ID {new_value} not found")
+                )
+                return
 
         # Save configuration
         if is_personal:
@@ -506,8 +540,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip().lstrip("/")
-        parts = self._parse_args(message)
-        path = parts[2] if len(parts) > 2 else None
+        path = self._strip_command(message, "rssutil rsshub") or None
 
         await self.util_commands.util_rsshub(event, path)
 
@@ -517,7 +550,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        url = message.replace("rssutil test", "").strip()
+        url = self._strip_command(message, "rssutil test")
 
         if not url:
             event.set_result(event.make_result().message("Usage: /rssutil test <url>"))
@@ -531,7 +564,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        name_or_id = message.replace("rssutil trigger", "").strip() or None
+        name_or_id = self._strip_command(message, "rssutil trigger") or None
 
         await self.util_commands.util_trigger(event, name_or_id)
 
@@ -546,7 +579,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        name = message.replace("rssgroup add", "").strip()
+        name = self._strip_command(message, "rssgroup add")
 
         if not name:
             event.set_result(event.make_result().message("Usage: /rssgroup add <name>"))
@@ -560,7 +593,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("rssgroup rename", "").strip().split(maxsplit=1)
+        parts = self._strip_command(message, "rssgroup rename").split(maxsplit=1)
 
         if len(parts) < 2:
             event.set_result(
@@ -588,7 +621,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("rssgroup time", "").strip().split()
+        parts = self._strip_command(message, "rssgroup time").split()
 
         if len(parts) < 3:
             event.set_result(
@@ -624,7 +657,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("rsssub join", "").strip().split()
+        parts = self._strip_command(message, "rsssub join").split()
 
         if len(parts) < 1:
             event.set_result(
@@ -646,7 +679,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("rsssub leave", "").strip().split()
+        parts = self._strip_command(message, "rsssub leave").split()
 
         if len(parts) < 1:
             event.set_result(
@@ -669,7 +702,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("rsssub add", "").strip().split()
+        parts = self._strip_command(message, "rsssub add").split()
 
         if len(parts) < 2:
             event.set_result(
@@ -697,7 +730,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("rsssub del", "").strip().split()
+        parts = self._strip_command(message, "rsssub del").split()
 
         if len(parts) < 2:
             event.set_result(
@@ -725,7 +758,7 @@ class Main(star.Star):
         await self.initialize()
 
         message = event.message_str.strip()
-        parts = message.replace("rsssub list", "").strip().split()
+        parts = self._strip_command(message, "rsssub list").split()
 
         if len(parts) < 1:
             event.set_result(
@@ -923,36 +956,38 @@ class Main(star.Star):
                 )
             buttons.append(row_buttons)
 
-        global_config_layout = [
-            [("ai_summary_enabled", "🤖"), ("enable_proxy", "🌐")],
-        ]
+        is_admin = event.role in ("admin", "superuser")
+        if is_admin:
+            global_config_layout = [
+                [("ai_summary_enabled", "🤖"), ("enable_proxy", "🌐")],
+            ]
 
-        for row in global_config_layout:
-            row_buttons = []
-            for key, emoji in row:
-                current_value = getattr(subscription, key, False)
-                status = "✅" if current_value else "❌"
-                button_text = f"{emoji} {status}"
-                row_buttons.append(
-                    {
-                        "text": button_text,
-                        "callback_data": f"rssupdate_toggle:{session_id}:{sub_id}:{key}",
-                    }
+            for row in global_config_layout:
+                row_buttons = []
+                for key, emoji in row:
+                    current_value = getattr(subscription, key, False)
+                    status = "✅" if current_value else "❌"
+                    button_text = f"{emoji} {status}"
+                    row_buttons.append(
+                        {
+                            "text": button_text,
+                            "callback_data": f"rssupdate_toggle:{session_id}:{sub_id}:{key}",
+                        }
+                    )
+                buttons.append(row_buttons)
+
+            numeric_configs = [("interval", "⏱️"), ("max_image_number", "📷")]
+            for key, emoji in numeric_configs:
+                current_value = getattr(subscription, key, 0)
+                button_text = f"{emoji} {current_value}"
+                buttons.append(
+                    [
+                        {
+                            "text": button_text,
+                            "callback_data": f"rssupdate_edit:{session_id}:{sub_id}:{key}",
+                        }
+                    ]
                 )
-            buttons.append(row_buttons)
-
-        numeric_configs = [("interval", "⏱️"), ("max_image_number", "📷")]
-        for key, emoji in numeric_configs:
-            current_value = getattr(subscription, key, 0)
-            button_text = f"{emoji} {current_value}"
-            buttons.append(
-                [
-                    {
-                        "text": button_text,
-                        "callback_data": f"rssupdate_edit:{session_id}:{sub_id}:{key}",
-                    }
-                ]
-            )
 
         buttons.append(
             [
@@ -967,7 +1002,7 @@ class Main(star.Star):
         result.message(
             f"⚙️ **{subscription.name}** - [{subscription.url}]({subscription.url})\n\n"
             f"📋 **个人配置** (点击切换)\n"
-            f"🔧 **全局配置** (点击切换/编辑)\n\n"
+            f"{'🔧 **全局配置** (管理员点击切换/编辑)' if is_admin else ''}\n\n"
             f"请点击按钮进行配置:"
         )
         result.inline_keyboard(buttons)
@@ -1073,64 +1108,10 @@ class Main(star.Star):
         event: TelegramCallbackQueryEvent,
         session_id: str,
         sub_id: int,
-        user_id: str,
+        _user_id: str,
     ) -> None:
         """Show config toggle keyboard for a subscription."""
-        session = KEYBOARD_SESSIONS.get(session_id)
-        if not session:
-            await event.answer_callback_query(text="❌ Session expired")
-            return
-
-        subscription = await self.db.get_subscription(sub_id)
-        if not subscription:
-            await event.answer_callback_query(text="❌ Subscription not found")
-            return
-
-        subscriber = await self.db.get_subscriber(sub_id, session["umo"])
-        if not subscriber:
-            await event.answer_callback_query(text="❌ You are not subscribed")
-            return
-
-        config_layout = [
-            [
-                ("only_title", "仅标题", "📄"),
-                ("only_pic", "仅图片", "🖼️"),
-                ("only_has_pic", "有图片才发", "📸"),
-            ],
-            [("enable_spoiler", "图片遮挡", "👁️"), ("stop", "暂停订阅", "⏸️")],
-        ]
-
-        buttons = []
-        config = subscriber.personal_config or {}
-        for row in config_layout:
-            row_buttons = []
-            for key, text, emoji in row:
-                current_value = config.get(key, False)
-                status = "✅" if current_value else "⭕"
-                button_text = f"{emoji} {text} {status}"
-                row_buttons.append(
-                    {
-                        "text": button_text,
-                        "callback_data": f"toggle:{session_id}:{sub_id}:{user_id}:{key}",
-                    }
-                )
-            buttons.append(row_buttons)
-
-        buttons.append(
-            [
-                {
-                    "text": "⬅️ 返回列表",
-                    "callback_data": f"rssupdate_back:{session_id}",
-                }
-            ]
-        )
-
-        result = MessageEventResult()
-        result.message(
-            f"⚙️ **{subscription.name}** - [{subscription.url}]({subscription.url}) 配置\n\n点击按钮切换开关状态:"
-        )
-        result.inline_keyboard(buttons)
-        event.set_result(result)
+        await self._refresh_config_keyboard_mode_b(event, session_id, sub_id)
 
     async def _show_config_keyboard_mode_b(
         self, event: AstrMessageEvent, name_or_id: str
@@ -1191,36 +1172,38 @@ class Main(star.Star):
                 )
             buttons.append(row_buttons)
 
-        global_config_layout = [
-            [("ai_summary_enabled", "🤖"), ("enable_proxy", "🌐")],
-        ]
+        is_admin = event.role in ("admin", "superuser")
+        if is_admin:
+            global_config_layout = [
+                [("ai_summary_enabled", "🤖"), ("enable_proxy", "🌐")],
+            ]
 
-        for row in global_config_layout:
-            row_buttons = []
-            for key, emoji in row:
-                current_value = getattr(subscription, key, False)
-                status = "✅" if current_value else "❌"
-                button_text = f"{emoji} {status}"
-                row_buttons.append(
-                    {
-                        "text": button_text,
-                        "callback_data": f"rssupdate_toggle:{session_id}:{sub_id}:{key}",
-                    }
+            for row in global_config_layout:
+                row_buttons = []
+                for key, emoji in row:
+                    current_value = getattr(subscription, key, False)
+                    status = "✅" if current_value else "❌"
+                    button_text = f"{emoji} {status}"
+                    row_buttons.append(
+                        {
+                            "text": button_text,
+                            "callback_data": f"rssupdate_toggle:{session_id}:{sub_id}:{key}",
+                        }
+                    )
+                buttons.append(row_buttons)
+
+            numeric_configs = [("interval", "⏱️"), ("max_image_number", "📷")]
+            for key, emoji in numeric_configs:
+                current_value = getattr(subscription, key, 0)
+                button_text = f"{emoji} {current_value}"
+                buttons.append(
+                    [
+                        {
+                            "text": button_text,
+                            "callback_data": f"rssupdate_edit:{session_id}:{sub_id}:{key}",
+                        }
+                    ]
                 )
-            buttons.append(row_buttons)
-
-        numeric_configs = [("interval", "⏱️"), ("max_image_number", "📷")]
-        for key, emoji in numeric_configs:
-            current_value = getattr(subscription, key, 0)
-            button_text = f"{emoji} {current_value}"
-            buttons.append(
-                [
-                    {
-                        "text": button_text,
-                        "callback_data": f"rssupdate_edit:{session_id}:{sub_id}:{key}",
-                    }
-                ]
-            )
 
         buttons.append(
             [
@@ -1235,7 +1218,7 @@ class Main(star.Star):
         result.message(
             f"⚙️ **{subscription.name}** - [{subscription.url}]({subscription.url})\n\n"
             f"📋 **个人配置** (点击切换)\n"
-            f"🔧 **全局配置** (点击切换/编辑)\n\n"
+            f"{'🔧 **全局配置** (管理员点击切换/编辑)' if is_admin else ''}\n\n"
             f"请点击按钮进行配置:"
         )
         result.inline_keyboard(buttons)
@@ -1304,40 +1287,47 @@ class Main(star.Star):
                 current_str = "✅" if current else "❌"
             lines.append(f"| {number} | `{key}` | {current_str} | {desc} |")
 
-        lines.append("")
-        lines.append("🔧 **全局配置**")
-        lines.append("| 序号 | 参数 | 当前值 | 说明 |")
-        lines.append("|------|------|--------|------|")
+        is_admin = event.role in ("admin", "superuser")
+        if is_admin:
+            lines.append("")
+            lines.append("🔧 **全局配置（管理员）**")
+            lines.append("| 序号 | 参数 | 当前值 | 说明 |")
+            lines.append("|------|------|--------|------|")
 
-        global_configs = [
-            ("interval", "抓取间隔（分钟）", subscription.interval),
-            ("max_image_number", "最大图片数", subscription.max_image_number),
-            ("ai_summary_enabled", "AI摘要开关", subscription.ai_summary_enabled),
-            ("enable_proxy", "使用代理", subscription.enable_proxy),
-            ("source_group_id", "所属分组ID", subscription.source_group_id),
-        ]
+            global_configs = [
+                ("interval", "抓取间隔（分钟）", subscription.interval),
+                ("max_image_number", "最大图片数", subscription.max_image_number),
+                ("ai_summary_enabled", "AI摘要开关", subscription.ai_summary_enabled),
+                ("enable_proxy", "使用代理", subscription.enable_proxy),
+                ("source_group_id", "所属分组ID", subscription.source_group_id),
+                ("black_keyword", "关键词黑名单（全局）", subscription.black_keyword),
+            ]
 
-        for idx, (key, desc, value) in enumerate(global_configs):
-            number = (
-                GLOBAL_CONFIG_NUMBERS[idx]
-                if idx < len(GLOBAL_CONFIG_NUMBERS)
-                else str(idx + 7)
-            )
-            if isinstance(value, bool):
-                value_str = "✅" if value else "❌"
-            else:
-                value_str = f"`{value}`"
-            lines.append(f"| {number} | `{key}` | {value_str} | {desc} |")
+            for idx, (key, desc, value) in enumerate(global_configs):
+                number = (
+                    GLOBAL_CONFIG_NUMBERS[idx]
+                    if idx < len(GLOBAL_CONFIG_NUMBERS)
+                    else str(idx + 7)
+                )
+                if isinstance(value, bool):
+                    value_str = "✅" if value else "❌"
+                else:
+                    value_str = f"`{value}`" if value else "`无`"
+                lines.append(f"| {number} | `{key}` | {value_str} | {desc} |")
 
         lines.append("\n**用法**: `/rssupdate <订阅ID> <序号|参数名> <值>`")
         lines.append(
-            "\n示例: `/rssupdate {sub_id} ① true` 或 `/rssupdate {sub_id} only_title true`"
+            f"\n示例: `/rssupdate {sub_id} ① true` 或 `/rssupdate {sub_id} only_title true`"
         )
 
         event.set_result(MessageEventResult().message("\n".join(lines)))
 
     async def _handle_mode_c(
-        self, event: AstrMessageEvent, name_or_id: str, config_key: str
+        self,
+        event: AstrMessageEvent,
+        name_or_id: str,
+        config_key: str,
+        forced_scope: str | None = None,
     ) -> None:
         from .models import (
             CONFIG_DESCRIPTIONS,
@@ -1361,10 +1351,19 @@ class Main(star.Star):
             )
             return
 
-        is_personal = config_key in PERSONAL_CONFIG_KEYS
-        is_global = config_key in GLOBAL_CONFIGURABLE_FIELDS
+        key_is_personal = config_key in PERSONAL_CONFIG_KEYS
+        key_is_global = config_key in GLOBAL_CONFIGURABLE_FIELDS
+        is_personal = key_is_personal and forced_scope != "global"
+        is_global = key_is_global and forced_scope != "personal"
 
-        if not is_personal and not is_global:
+        if (
+            forced_scope == "personal"
+            and not key_is_personal
+            or forced_scope == "global"
+            and not key_is_global
+            or not is_personal
+            and not is_global
+        ):
             event.set_result(
                 MessageEventResult().message(
                     f"❌ 未知的配置项: `{config_key}`\n"
@@ -1379,6 +1378,10 @@ class Main(star.Star):
                     )
                 )
             )
+            return
+
+        if is_global and event.role not in ("admin", "superuser"):
+            event.set_result(MessageEventResult().message("❌ 全局配置需要管理员权限"))
             return
 
         if is_personal:
@@ -1396,7 +1399,11 @@ class Main(star.Star):
         else:
             desc_key = config_key
 
-        number = CONFIG_NAME_MAP.get(config_key, "")
+        number = (
+            "⑫"
+            if is_global and config_key == "black_keyword"
+            else CONFIG_NAME_MAP.get(config_key, "")
+        )
         config_desc = CONFIG_DESCRIPTIONS.get(desc_key, f"{number} {config_key}")
 
         if isinstance(current_value, bool):
@@ -1478,6 +1485,14 @@ class Main(star.Star):
     ) -> None:
         """Show global config toggle keyboard for a subscription (admin only)."""
         await self.initialize()
+
+        if event.role not in ("admin", "superuser"):
+            msg = "❌ This command requires admin privileges"
+            if isinstance(event, TelegramCallbackQueryEvent):
+                await event.answer_callback_query(text=msg)
+            else:
+                event.set_result(MessageEventResult().message(msg))
+            return
 
         subscription = await self.db.get_subscription(sub_id)
         if not subscription:
@@ -1637,6 +1652,9 @@ class Main(star.Star):
 
             # Handle globalconfig callback (show global config keyboard)
             if action == "globalconfig" and len(parts) >= 3:
+                if event.role not in ("admin", "superuser"):
+                    await event.answer_callback_query(text="❌ 全局配置需要管理员权限")
+                    return
                 session_id = parts[1]
                 sub_id = int(parts[2])
                 await self._show_global_config_keyboard(event, sub_id)
@@ -1644,6 +1662,9 @@ class Main(star.Star):
 
             # Handle globaltoggle callback (toggle global config)
             if action == "globaltoggle" and len(parts) >= 3:
+                if event.role not in ("admin", "superuser"):
+                    await event.answer_callback_query(text="❌ 全局配置需要管理员权限")
+                    return
                 sub_id = int(parts[1])
                 config_key = parts[2]
 
@@ -1717,6 +1738,11 @@ class Main(star.Star):
                         text=f"✅ {config_key} {status_text}"
                     )
                 elif config_key in global_config_keys:
+                    if event.role not in ("admin", "superuser"):
+                        await event.answer_callback_query(
+                            text="❌ 全局配置需要管理员权限"
+                        )
+                        return
                     current_value = getattr(subscription, config_key, False)
                     setattr(subscription, config_key, not current_value)
                     await self.db.update_subscription(subscription)
@@ -1741,6 +1767,9 @@ class Main(star.Star):
 
             # Handle rssupdate_edit callback (edit numeric configs)
             if action == "rssupdate_edit" and len(parts) >= 4:
+                if event.role not in ("admin", "superuser"):
+                    await event.answer_callback_query(text="❌ 全局配置需要管理员权限")
+                    return
                 session_id = parts[1]
                 sub_id = int(parts[2])
                 config_key = parts[3]

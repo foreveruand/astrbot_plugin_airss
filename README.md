@@ -183,6 +183,15 @@
 | ⑪ | `source_group_id` | 所属分组 ID |
 | ⑫ | `black_keyword` | 关键词黑名单 |
 
+其他管理员全局配置项可通过 `/rssupdate global <订阅ID> <参数> <值>` 修改：
+`name`、`url`、`cookies`、`content_to_remove`、`stop`。
+其中 `stop=true` 会暂停该订阅源抓取并移除定时抓取任务，`stop=false` 会恢复定时抓取。
+`enable_proxy` 控制该订阅是否使用 `proxy_config.proxy` 抓取；新订阅会继承 `proxy_config.enable_proxy` 作为默认值。
+
+说明：
+- `/rssadd` 的订阅名称会使用 URL 后面的全部文本，例如 `/rssadd https://example.com/feed.xml My Tech Feed`
+- 对包含空格的订阅名执行 `/rssupdate` 时，建议使用订阅 ID，避免名称和配置项解析歧义
+
 ### 分组命令 (管理员)
 
 | 命令 | 说明 | 示例 |
@@ -217,6 +226,7 @@
 
 说明：
 - 配置了 `rsshub_config.rsshub_key` 后，`/rssutil rsshub [path]` 与 `/rssadd /path` 都会自动生成带 `code` 参数的完整 RSSHub URL。
+- `code` 按 RSSHub 当前校验逻辑使用最终 URL 的 pathname 加 `rsshub_key` 计算；已有 `%2F` 等转义不会被二次编码，路径里原始空格、Unicode 等字符会先编码再签名。
 
 ## 个性化配置
 
@@ -262,6 +272,7 @@
 - 摘要按“每个接收者当前可见的未发送文章集合”生成，不再固定为“每个分组只生成一份公共摘要”
 - 只有当多个接收者的文章 ID 集合完全一致时，才会复用同一份摘要
 - `stop` 状态的接收者不会参与摘要生成，也不会影响其他接收者的分桶结果
+- 摘要会沿用订阅者的 `black_keyword` 和 `only_has_pic` 过滤规则，被过滤文章会标记为该订阅者已处理，避免下次重复进入摘要
 - 只有当摘要成功发送给某个接收者后，才会标记该接收者对应的文章为已发送
 
 ## 数据存储
