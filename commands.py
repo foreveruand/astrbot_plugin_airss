@@ -33,6 +33,7 @@ PERSONAL_CONFIG_DESCRIPTIONS = {
     "enable_spoiler": "图片使用剧透标签（隐藏）",
     "stop": "暂停订阅",
     "black_keyword": "关键词黑名单，多个用逗号分隔",
+    "white_keyword": "关键词白名单，多个用逗号分隔",
 }
 # Global config descriptions for display
 GLOBAL_CONFIG_DESCRIPTIONS = {
@@ -466,7 +467,7 @@ class RSSCommands:
             event.set_result(MessageEventResult().message("\n".join(lines)))
             return
         # Parse value
-        if config_key == "black_keyword":
+        if config_key in ("black_keyword", "white_keyword"):
             value = config_value or ""
         else:
             value = (

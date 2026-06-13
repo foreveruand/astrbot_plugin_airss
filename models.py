@@ -128,9 +128,10 @@ PERSONAL_CONFIG_KEYS = {
     "enable_spoiler": False,  # Spoiler images
     "stop": False,  # Pause subscription for this subscriber
     "black_keyword": "",  # Keyword filter
+    "white_keyword": "",  # Keyword allowlist filter
 }
 
-# Config number to name mapping for interactive selection (personal configs ①-⑥)
+# Config number to name mapping for interactive selection
 CONFIG_NUMBER_MAP = {
     "①": "only_title",
     "②": "only_pic",
@@ -145,6 +146,7 @@ CONFIG_NUMBER_MAP = {
     "⑩": "enable_proxy",
     "⑪": "source_group_id",
     "⑫": "black_keyword",
+    "⑬": "white_keyword",
 }
 
 # Config name to number mapping (reverse of CONFIG_NUMBER_MAP)
@@ -155,6 +157,7 @@ CONFIG_NAME_MAP = {
     "enable_spoiler": "④",
     "stop": "⑤",
     "black_keyword": "⑥",  # Personal config takes precedence
+    "white_keyword": "⑬",
     "interval": "⑦",
     "max_image_number": "⑧",
     "ai_summary_enabled": "⑨",
@@ -178,10 +181,11 @@ CONFIG_DESCRIPTIONS = {
     "source_group_id": "⑪ 所属分组ID - 当前: {value}",
     "black_keyword_personal": "⑥ 关键词黑名单 - 当前: {value}",
     "black_keyword_global": "⑫ 关键词黑名单（全局）- 当前: {value}",
+    "white_keyword": "⑬ 关键词白名单 - 当前: {value}",
 }
 
 
-PERSONAL_CONFIG_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥"]
+PERSONAL_CONFIG_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥", "⑬"]
 GLOBAL_CONFIG_NUMBERS = ["⑦", "⑧", "⑨", "⑩", "⑪", "⑫"]
 
 

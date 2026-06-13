@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.7] - 2026-06-13
+
+### Added
+- Personal `white_keyword` subscription filtering for `/rssupdate`
+  - Matches article title and content with comma-separated keywords
+  - Keeps black keyword filtering higher priority when both are configured
+
+### Changed
+- Telegram `/rssupdate` buttons now include short labels instead of emoji-only controls
+- Admin users can switch from the personal config panel to the global config panel with a dedicated inline button
+
+### Fixed
+- Telegram `/rssupdate` callback data is shorter and no longer includes unnecessary user IDs
+- Callback admin permission now falls back to the keyboard session creator, so global config buttons keep working after Telegram callback events
+
 ## [1.6.6] - 2026-06-08
 
 ### Fixed

@@ -245,8 +245,8 @@ class RSSScheduler:
         return articles
 
     @staticmethod
-    def _article_matches_keywords(article: RSSArticle, black_keyword: str) -> bool:
-        keywords = [k.strip() for k in black_keyword.split(",") if k.strip()]
+    def _article_matches_keywords(article: RSSArticle, keyword_text: str) -> bool:
+        keywords = [k.strip() for k in keyword_text.split(",") if k.strip()]
         if not keywords:
             return False
 
@@ -269,11 +269,16 @@ class RSSScheduler:
         visible_articles: list[RSSArticle] = []
         skipped_article_ids: list[int] = []
         black_keyword = get_effective_text(subscriber, "black_keyword", subscription)
+        white_keyword = get_effective_text(subscriber, "white_keyword", subscription)
         only_has_pic = get_effective_bool(subscriber, "only_has_pic", subscription)
 
         for article in articles:
             should_skip = False
             if black_keyword and self._article_matches_keywords(article, black_keyword):
+                should_skip = True
+            elif white_keyword and not self._article_matches_keywords(
+                article, white_keyword
+            ):
                 should_skip = True
             elif only_has_pic and not article.image_urls:
                 should_skip = True

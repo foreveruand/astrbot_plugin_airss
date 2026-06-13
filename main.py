@@ -113,6 +113,31 @@ class Main(star.Star):
         await self.db.close()
         logger.info("RSS plugin terminated")
 
+    def _is_admin(self, event: AstrMessageEvent, session_id: str | None = None) -> bool:
+        """Check admin role, falling back to the keyboard session creator."""
+        if event.role in ("admin", "superuser"):
+            return True
+        if not session_id:
+            return False
+
+        session = KEYBOARD_SESSIONS.get(session_id)
+        if not session or not session.get("is_admin", False):
+            return False
+
+        session_user_id = session.get("user_id")
+        return not session_user_id or session_user_id == event.get_sender_id()
+
+    async def _send_or_set_result(
+        self,
+        event: AstrMessageEvent | TelegramCallbackQueryEvent,
+        result: MessageEventResult,
+    ) -> None:
+        """Edit callback messages immediately; use normal result flow otherwise."""
+        event.set_result(result)
+        if isinstance(event, TelegramCallbackQueryEvent):
+            await event.send(result)
+            event.clear_result()
+
     def _parse_args(self, message: str) -> list[str]:
         """Parse message into arguments."""
         parts = message.strip().split()
@@ -351,7 +376,7 @@ class Main(star.Star):
         subscriber = await self.db.get_subscriber(sub_id, umo)
 
         # Check permissions
-        is_admin = event.role in ("admin", "superuser")
+        is_admin = self._is_admin(event)
         key_is_personal = config_key in PERSONAL_CONFIG_KEYS
         key_is_global = config_key in GLOBAL_CONFIGURABLE_FIELDS
         is_personal = key_is_personal and forced_scope != "global"
@@ -478,7 +503,9 @@ class Main(star.Star):
         # Boolean fields
         bool_keys = list(PERSONAL_CONFIG_KEYS.keys())
         # Remove non-bool keys from personal config
-        bool_keys = [k for k in bool_keys if k != "black_keyword"]
+        bool_keys = [
+            k for k in bool_keys if k not in ("black_keyword", "white_keyword")
+        ]
         bool_keys.extend(GLOBAL_CONFIG_BOOL_FIELDS)
 
         if config_key in bool_keys:
@@ -848,7 +875,7 @@ class Main(star.Star):
         result = MessageEventResult()
         result.message("🗑️ Select a subscription to unsubscribe:")
         result.inline_keyboard(buttons)
-        event.set_result(result)
+        await self._send_or_set_result(event, result)
 
     async def _show_rssupdate_keyboard(self, event: AstrMessageEvent) -> None:
         """Show inline keyboard with subscriptions for config (Telegram only)."""
@@ -888,6 +915,7 @@ class Main(star.Star):
             "umo": umo,
             "type": "rssupdate_select",
             "user_id": user_id,
+            "is_admin": self._is_admin(event),
         }
 
         # Build keyboard buttons
@@ -897,7 +925,7 @@ class Main(star.Star):
                 [
                     {
                         "text": f"📰 {sub.name} (ID: {sub.id})",
-                        "callback_data": f"rssupdate_select:{session_id}:{sub.id}:{user_id}",
+                        "callback_data": f"rus:{session_id}:{sub.id}",
                     }
                 ]
             )
@@ -905,7 +933,150 @@ class Main(star.Star):
         result = MessageEventResult()
         result.message("⚙️ Select a subscription to configure:")
         result.inline_keyboard(buttons)
-        event.set_result(result)
+        await self._send_or_set_result(event, result)
+
+    def _build_rssupdate_config_buttons(
+        self,
+        session_id: str,
+        sub_id: int,
+        subscription: RSSSubscription,
+        personal_config: dict,
+        is_admin: bool,
+    ) -> list[list[dict[str, str]]]:
+        """Build the personal rssupdate keyboard with short readable labels."""
+        buttons: list[list[dict[str, str]]] = []
+
+        personal_config_layout = [
+            [("only_title", "标题", "📄"), ("only_pic", "图片", "🖼️")],
+            [("only_has_pic", "有图", "📸"), ("enable_spoiler", "剧透", "👁️")],
+            [("stop", "暂停", "⏸️")],
+        ]
+
+        for row in personal_config_layout:
+            row_buttons = []
+            for key, label, emoji in row:
+                current_value = personal_config.get(key, False)
+                status = "✅" if current_value else "❌"
+                row_buttons.append(
+                    {
+                        "text": f"{emoji} {label} {status}",
+                        "callback_data": f"rut:{session_id}:{sub_id}:{key}",
+                    }
+                )
+            buttons.append(row_buttons)
+
+        buttons.append(
+            [
+                {
+                    "text": "🚫 黑词",
+                    "callback_data": f"rup:{session_id}:{sub_id}:personal:black_keyword",
+                },
+                {
+                    "text": "🔎 白词",
+                    "callback_data": f"rup:{session_id}:{sub_id}:personal:white_keyword",
+                },
+            ]
+        )
+
+        if is_admin:
+            buttons.append(
+                [
+                    {
+                        "text": "🔧 全局",
+                        "callback_data": f"rug:{session_id}:{sub_id}",
+                    }
+                ]
+            )
+
+        buttons.append(
+            [
+                {
+                    "text": "⬅️ 返回列表",
+                    "callback_data": f"rub:{session_id}",
+                }
+            ]
+        )
+
+        return buttons
+
+    def _build_global_config_buttons(
+        self,
+        sub_id: int,
+        subscription: RSSSubscription,
+        session_id: str | None = None,
+        return_to_personal: bool = False,
+    ) -> list[list[dict[str, str]]]:
+        """Build the global config keyboard for admin users."""
+        callback_session = session_id or "0"
+        buttons: list[list[dict[str, str]]] = []
+
+        global_bool_layout = [
+            [("ai_summary_enabled", "摘要", "🤖"), ("enable_proxy", "代理", "🌐")],
+            [("stop", "暂停", "⏸️")],
+        ]
+        for row in global_bool_layout:
+            row_buttons = []
+            for key, label, emoji in row:
+                current_value = getattr(subscription, key, False)
+                status = "✅" if current_value else "❌"
+                row_buttons.append(
+                    {
+                        "text": f"{emoji} {label} {status}",
+                        "callback_data": f"rgt:{callback_session}:{sub_id}:{key}",
+                    }
+                )
+            buttons.append(row_buttons)
+
+        buttons.append(
+            [
+                {
+                    "text": f"⏱️ 间隔 {subscription.interval}",
+                    "callback_data": f"rup:{callback_session}:{sub_id}:global:interval",
+                },
+                {
+                    "text": f"📷 图数 {subscription.max_image_number}",
+                    "callback_data": f"rup:{callback_session}:{sub_id}:global:max_image_number",
+                },
+            ]
+        )
+        buttons.append(
+            [
+                {
+                    "text": f"🧩 分组 {subscription.source_group_id}",
+                    "callback_data": f"rup:{callback_session}:{sub_id}:global:source_group_id",
+                },
+                {
+                    "text": "🚫 黑词",
+                    "callback_data": f"rup:{callback_session}:{sub_id}:global:black_keyword",
+                },
+            ]
+        )
+
+        if session_id and return_to_personal:
+            buttons.append(
+                [
+                    {
+                        "text": "📋 个人",
+                        "callback_data": f"rups:{session_id}:{sub_id}",
+                    },
+                    {
+                        "text": "⬅️ 列表",
+                        "callback_data": f"rub:{session_id}",
+                    },
+                ]
+            )
+        else:
+            back_session = session_id or "0"
+            buttons.append(
+                [
+                    {
+                        "text": "⬅️ 返回列表",
+                        "callback_data": f"globallist:{back_session}:nop",
+                    }
+                ]
+            )
+
+        return buttons
 
     async def _refresh_config_keyboard_mode_b(
         self, event: TelegramCallbackQueryEvent, session_id: str, sub_id: int
@@ -915,98 +1086,38 @@ class Main(star.Star):
         if not session:
             result = MessageEventResult()
             result.message("❌ Session expired")
-            event.set_result(result)
+            await self._send_or_set_result(event, result)
             return
 
         subscription = await self.db.get_subscription(sub_id)
         if not subscription:
             result = MessageEventResult()
             result.message("❌ 订阅未找到")
-            event.set_result(result)
+            await self._send_or_set_result(event, result)
             return
 
         subscriber = await self.db.get_subscriber(sub_id, session["umo"])
         if not subscriber:
             result = MessageEventResult()
             result.message("❌ 您未订阅此源")
-            event.set_result(result)
+            await self._send_or_set_result(event, result)
             return
 
         personal_config = subscriber.personal_config or {}
 
-        buttons = []
-
-        personal_config_layout = [
-            [("only_title", "📄"), ("only_pic", "🖼️")],
-            [("only_has_pic", "📸"), ("enable_spoiler", "👁️")],
-            [("stop", "⏸️")],
-        ]
-
-        for row in personal_config_layout:
-            row_buttons = []
-            for key, emoji in row:
-                current_value = personal_config.get(key, False)
-                status = "✅" if current_value else "❌"
-                button_text = f"{emoji} {status}"
-                row_buttons.append(
-                    {
-                        "text": button_text,
-                        "callback_data": f"rssupdate_toggle:{session_id}:{sub_id}:{key}",
-                    }
-                )
-            buttons.append(row_buttons)
-
-        is_admin = event.role in ("admin", "superuser")
-        if is_admin:
-            global_config_layout = [
-                [("ai_summary_enabled", "🤖"), ("enable_proxy", "🌐")],
-            ]
-
-            for row in global_config_layout:
-                row_buttons = []
-                for key, emoji in row:
-                    current_value = getattr(subscription, key, False)
-                    status = "✅" if current_value else "❌"
-                    button_text = f"{emoji} {status}"
-                    row_buttons.append(
-                        {
-                            "text": button_text,
-                            "callback_data": f"rssupdate_toggle:{session_id}:{sub_id}:{key}",
-                        }
-                    )
-                buttons.append(row_buttons)
-
-            numeric_configs = [("interval", "⏱️"), ("max_image_number", "📷")]
-            for key, emoji in numeric_configs:
-                current_value = getattr(subscription, key, 0)
-                button_text = f"{emoji} {current_value}"
-                buttons.append(
-                    [
-                        {
-                            "text": button_text,
-                            "callback_data": f"rssupdate_edit:{session_id}:{sub_id}:{key}",
-                        }
-                    ]
-                )
-
-        buttons.append(
-            [
-                {
-                    "text": "⬅️ 返回列表",
-                    "callback_data": f"rssupdate_back:{session_id}",
-                }
-            ]
+        is_admin = self._is_admin(event, session_id)
+        buttons = self._build_rssupdate_config_buttons(
+            session_id, sub_id, subscription, personal_config, is_admin
         )
 
         result = MessageEventResult()
         result.message(
             f"⚙️ **{subscription.name}** - [{subscription.url}]({subscription.url})\n\n"
-            f"📋 **个人配置** (点击切换)\n"
-            f"{'🔧 **全局配置** (管理员点击切换/编辑)' if is_admin else ''}\n\n"
-            f"请点击按钮进行配置:"
+            f"📋 **个人配置**\n"
+            f"{'管理员可点 🔧 全局 切换全局配置。' if is_admin else ''}"
         )
         result.inline_keyboard(buttons)
-        event.set_result(result)
+        await self._send_or_set_result(event, result)
 
     async def _refresh_rssupdate_keyboard(
         self, event: TelegramCallbackQueryEvent, session_id: str
@@ -1016,7 +1127,7 @@ class Main(star.Star):
         if not session:
             result = MessageEventResult()
             result.message("❌ Session expired")
-            event.set_result(result)
+            await self._send_or_set_result(event, result)
             return
 
         umo = session.get("umo", "")
@@ -1033,10 +1144,8 @@ class Main(star.Star):
         if not user_subs:
             result = MessageEventResult()
             result.message("📭 You have no subscriptions to configure.")
-            event.set_result(result)
+            await self._send_or_set_result(event, result)
             return
-
-        user_id = session.get("user_id", "")
 
         buttons = []
         for sub in user_subs:
@@ -1044,7 +1153,7 @@ class Main(star.Star):
                 [
                     {
                         "text": f"📰 {sub.name} (ID: {sub.id})",
-                        "callback_data": f"rssupdate_select:{session_id}:{sub.id}:{user_id}",
+                        "callback_data": f"rus:{session_id}:{sub.id}",
                     }
                 ]
             )
@@ -1052,7 +1161,7 @@ class Main(star.Star):
         result = MessageEventResult()
         result.message("⚙️ Select a subscription to configure:")
         result.inline_keyboard(buttons)
-        event.set_result(result)
+        await self._send_or_set_result(event, result)
 
     async def _show_rssupdate_selection(self, event: AstrMessageEvent) -> None:
         """Show text-based subscription selection list for non-Telegram platforms."""
@@ -1146,83 +1255,24 @@ class Main(star.Star):
             "umo": umo,
             "type": "rssupdate_mode_b",
             "user_id": user_id,
+            "is_admin": self._is_admin(event),
         }
 
         personal_config = subscriber.personal_config or {}
 
-        buttons = []
-
-        personal_config_layout = [
-            [("only_title", "📄"), ("only_pic", "🖼️")],
-            [("only_has_pic", "📸"), ("enable_spoiler", "👁️")],
-            [("stop", "⏸️")],
-        ]
-
-        for row in personal_config_layout:
-            row_buttons = []
-            for key, emoji in row:
-                current_value = personal_config.get(key, False)
-                status = "✅" if current_value else "❌"
-                button_text = f"{emoji} {status}"
-                row_buttons.append(
-                    {
-                        "text": button_text,
-                        "callback_data": f"rssupdate_toggle:{session_id}:{sub_id}:{key}",
-                    }
-                )
-            buttons.append(row_buttons)
-
         is_admin = event.role in ("admin", "superuser")
-        if is_admin:
-            global_config_layout = [
-                [("ai_summary_enabled", "🤖"), ("enable_proxy", "🌐")],
-            ]
-
-            for row in global_config_layout:
-                row_buttons = []
-                for key, emoji in row:
-                    current_value = getattr(subscription, key, False)
-                    status = "✅" if current_value else "❌"
-                    button_text = f"{emoji} {status}"
-                    row_buttons.append(
-                        {
-                            "text": button_text,
-                            "callback_data": f"rssupdate_toggle:{session_id}:{sub_id}:{key}",
-                        }
-                    )
-                buttons.append(row_buttons)
-
-            numeric_configs = [("interval", "⏱️"), ("max_image_number", "📷")]
-            for key, emoji in numeric_configs:
-                current_value = getattr(subscription, key, 0)
-                button_text = f"{emoji} {current_value}"
-                buttons.append(
-                    [
-                        {
-                            "text": button_text,
-                            "callback_data": f"rssupdate_edit:{session_id}:{sub_id}:{key}",
-                        }
-                    ]
-                )
-
-        buttons.append(
-            [
-                {
-                    "text": "⬅️ 返回列表",
-                    "callback_data": f"rssupdate_back:{session_id}",
-                }
-            ]
+        buttons = self._build_rssupdate_config_buttons(
+            session_id, sub_id, subscription, personal_config, is_admin
         )
 
         result = MessageEventResult()
         result.message(
             f"⚙️ **{subscription.name}** - [{subscription.url}]({subscription.url})\n\n"
-            f"📋 **个人配置** (点击切换)\n"
-            f"{'🔧 **全局配置** (管理员点击切换/编辑)' if is_admin else ''}\n\n"
-            f"请点击按钮进行配置:"
+            f"📋 **个人配置**\n"
+            f"{'管理员可点 🔧 全局 切换全局配置。' if is_admin else ''}"
         )
         result.inline_keyboard(buttons)
-        event.set_result(result)
+        await self._send_or_set_result(event, result)
 
     async def _show_config_table_mode_b(
         self, event: AstrMessageEvent, name_or_id: str
@@ -1272,6 +1322,7 @@ class Main(star.Star):
             ("enable_spoiler", "图片剧透标签"),
             ("stop", "暂停订阅"),
             ("black_keyword", "关键词黑名单"),
+            ("white_keyword", "关键词白名单"),
         ]
 
         for idx, (key, desc) in enumerate(personal_configs):
@@ -1280,8 +1331,10 @@ class Main(star.Star):
                 if idx < len(PERSONAL_CONFIG_NUMBERS)
                 else str(idx + 1)
             )
-            current = personal_config.get(key, False if key != "black_keyword" else "")
-            if key == "black_keyword":
+            current = personal_config.get(
+                key, "" if key in ("black_keyword", "white_keyword") else False
+            )
+            if key in ("black_keyword", "white_keyword"):
                 current_str = f"`{current}`" if current else "`无`"
             else:
                 current_str = "✅" if current else "❌"
@@ -1396,6 +1449,8 @@ class Main(star.Star):
             desc_key = (
                 "black_keyword_personal" if is_personal else "black_keyword_global"
             )
+        elif config_key == "white_keyword":
+            desc_key = "white_keyword"
         else:
             desc_key = config_key
 
@@ -1444,20 +1499,22 @@ class Main(star.Star):
             result = MessageEventResult().message(
                 "❌ This command requires admin privileges"
             )
-            event.set_result(result)
+            await self._send_or_set_result(event, result)
             return
 
         all_subs = await self.db.get_all_subscriptions()
 
         if not all_subs:
             result = MessageEventResult().message("📭 No subscriptions yet.")
-            event.set_result(result)
+            await self._send_or_set_result(event, result)
             return
 
         # Create session for keyboard
         session_id = uuid.uuid4().hex[:8]
         KEYBOARD_SESSIONS[session_id] = {
             "type": "globalconfig",
+            "user_id": event.get_sender_id(),
+            "is_admin": self._is_admin(event),
         }
 
         # Build keyboard buttons
@@ -1478,21 +1535,70 @@ class Main(star.Star):
         result = MessageEventResult()
         result.message("🔧 **全局配置** - 选择订阅进行配置:")
         result.inline_keyboard(buttons)
-        event.set_result(result)
+        await self._send_or_set_result(event, result)
+
+    async def _refresh_global_list_keyboard(
+        self, event: TelegramCallbackQueryEvent, session_id: str
+    ) -> None:
+        """Refresh global config subscription list using an existing session."""
+        session = KEYBOARD_SESSIONS.get(session_id)
+        if not session:
+            result = MessageEventResult()
+            result.message("❌ Session expired")
+            await self._send_or_set_result(event, result)
+            return
+
+        all_subs = await self.db.get_all_subscriptions()
+        if not all_subs:
+            result = MessageEventResult()
+            result.message("📭 No subscriptions yet.")
+            await self._send_or_set_result(event, result)
+            return
+
+        buttons = []
+        for sub in all_subs:
+            if sub.id is None:
+                continue
+            subscribers = await self.db.get_subscribers(sub.id)
+            buttons.append(
+                [
+                    {
+                        "text": f"📰 {sub.name} (ID: {sub.id}) [{len(subscribers)} 订阅者]",
+                        "callback_data": f"globalconfig:{session_id}:{sub.id}",
+                    }
+                ]
+            )
+
+        result = MessageEventResult()
+        result.message("🔧 **全局配置** - 选择订阅进行配置:")
+        result.inline_keyboard(buttons)
+        await self._send_or_set_result(event, result)
 
     async def _show_global_config_keyboard(
-        self, event: AstrMessageEvent | TelegramCallbackQueryEvent, sub_id: int
+        self,
+        event: AstrMessageEvent | TelegramCallbackQueryEvent,
+        sub_id: int,
+        session_id: str | None = None,
+        return_to_personal: bool = False,
     ) -> None:
         """Show global config toggle keyboard for a subscription (admin only)."""
         await self.initialize()
 
-        if event.role not in ("admin", "superuser"):
+        if not self._is_admin(event, session_id):
             msg = "❌ This command requires admin privileges"
             if isinstance(event, TelegramCallbackQueryEvent):
                 await event.answer_callback_query(text=msg)
             else:
                 event.set_result(MessageEventResult().message(msg))
             return
+
+        if session_id is None and not isinstance(event, TelegramCallbackQueryEvent):
+            session_id = uuid.uuid4().hex[:8]
+            KEYBOARD_SESSIONS[session_id] = {
+                "type": "globalconfig",
+                "user_id": event.get_sender_id(),
+                "is_admin": True,
+            }
 
         subscription = await self.db.get_subscription(sub_id)
         if not subscription:
@@ -1503,49 +1609,96 @@ class Main(star.Star):
                 event.set_result(MessageEventResult().message(msg))
             return
 
-        # Global config toggle fields (from commands.py)
-        global_config_layout = [
-            [("ai_summary_enabled", "AI摘要", "🤖"), ("enable_proxy", "代理", "🌐")],
-            [("stop", "暂停", "⏸️")],
-        ]
-
-        buttons = []
-        for row in global_config_layout:
-            row_buttons = []
-            for key, text, emoji in row:
-                current_value = getattr(subscription, key, False)
-                status = "✅" if current_value else "⭕"
-                button_text = f"{emoji} {text} {status}"
-                row_buttons.append(
-                    {
-                        "text": button_text,
-                        "callback_data": f"globaltoggle:{sub_id}:{key}",
-                    }
-                )
-            buttons.append(row_buttons)
-
-        # Add back button
-        buttons.append(
-            [
-                {
-                    "text": "⬅️ 返回列表",
-                    "callback_data": "globallist:0:nop",
-                }
-            ]
+        buttons = self._build_global_config_buttons(
+            sub_id,
+            subscription,
+            session_id=session_id,
+            return_to_personal=return_to_personal,
         )
 
         result = MessageEventResult()
         result.message(
             f"🔧 **{subscription.name}** - [{subscription.url}]({subscription.url}) 全局配置\n\n"
-            f"间隔: {subscription.interval} 分钟\n\n"
-            f"点击按钮切换开关状态:"
+            f"开关项可直接切换，文本/数值项会显示设置命令。"
         )
         result.inline_keyboard(buttons)
 
-        if isinstance(event, TelegramCallbackQueryEvent):
-            event.set_result(result)
+        await self._send_or_set_result(event, result)
+
+    async def _show_config_prompt(
+        self,
+        event: TelegramCallbackQueryEvent,
+        session_id: str,
+        sub_id: int,
+        scope: str,
+        config_key: str,
+    ) -> None:
+        """Show the command needed to edit text or numeric config values."""
+        subscription = await self.db.get_subscription(sub_id)
+        if not subscription:
+            await event.answer_callback_query(text="❌ 订阅未找到")
+            return
+
+        if scope == "global":
+            if not self._is_admin(event, session_id):
+                await event.answer_callback_query(text="❌ 全局配置需要管理员权限")
+                return
+            allowed_keys = {
+                "interval",
+                "max_image_number",
+                "source_group_id",
+                "black_keyword",
+            }
+            if config_key not in allowed_keys:
+                await event.answer_callback_query(text="❌ 无效配置项")
+                return
+            current_value = getattr(subscription, config_key, None)
+        elif scope == "personal":
+            session = KEYBOARD_SESSIONS.get(session_id)
+            if not session:
+                await event.answer_callback_query(text="❌ Session expired")
+                return
+            if config_key not in ("black_keyword", "white_keyword"):
+                await event.answer_callback_query(text="❌ 无效配置项")
+                return
+            subscriber = await self.db.get_subscriber(sub_id, session["umo"])
+            if not subscriber:
+                await event.answer_callback_query(text="❌ 您未订阅此源")
+                return
+            personal_config = subscriber.personal_config or {}
+            current_value = personal_config.get(config_key, "")
         else:
-            event.set_result(result)
+            await event.answer_callback_query(text="❌ 无效配置项")
+            return
+
+        config_names = {
+            "black_keyword": "关键词黑名单",
+            "white_keyword": "关键词白名单",
+            "interval": "抓取间隔（分钟）",
+            "max_image_number": "最大图片数",
+            "source_group_id": "所属分组ID",
+        }
+        command_keys = {
+            ("personal", "black_keyword"): "⑥",
+            ("personal", "white_keyword"): "⑬",
+            ("global", "black_keyword"): "⑫",
+        }
+        command_key = command_keys.get((scope, config_key), config_key)
+        current_display = self._format_config_value(current_value)
+        numeric_keys = {"interval", "max_image_number", "source_group_id"}
+        value_hint = "<新数值>" if config_key in numeric_keys else "<新文本>"
+
+        await event.answer_callback_query(text="请按提示发送命令")
+        result = MessageEventResult()
+        result.message(
+            f"📝 **编辑配置项**\n\n"
+            f"订阅: {subscription.name}\n"
+            f"配置: {config_names.get(config_key, config_key)}\n"
+            f"当前值: {current_display}\n\n"
+            f"设置命令:\n"
+            f"`/rssupdate {sub_id} {command_key} {value_hint}`"
+        )
+        await self._send_or_set_result(event, result)
 
     @filter.callback_query()
     async def handle_callback(self, event: TelegramCallbackQueryEvent) -> None:
@@ -1598,10 +1751,10 @@ class Main(star.Star):
                 return
 
             # Handle rssupdate_select callback (show config keyboard)
-            if action == "rssupdate_select" and len(parts) >= 4:
+            if action in ("rus", "rssupdate_select") and len(parts) >= 3:
                 session_id = parts[1]
                 sub_id = int(parts[2])
-                user_id = parts[3]
+                user_id = parts[3] if len(parts) >= 4 else ""
                 await self._show_config_keyboard(event, session_id, sub_id, user_id)
                 return
 
@@ -1652,12 +1805,87 @@ class Main(star.Star):
 
             # Handle globalconfig callback (show global config keyboard)
             if action == "globalconfig" and len(parts) >= 3:
-                if event.role not in ("admin", "superuser"):
+                session_id = parts[1]
+                if not self._is_admin(event, session_id):
                     await event.answer_callback_query(text="❌ 全局配置需要管理员权限")
                     return
+                sub_id = int(parts[2])
+                await self._show_global_config_keyboard(
+                    event, sub_id, session_id=session_id
+                )
+                return
+
+            # Handle rssupdate_global_panel callback (switch from personal to global)
+            if action in ("rug", "rssupdate_global_panel") and len(parts) >= 3:
+                session_id = parts[1]
+                if not self._is_admin(event, session_id):
+                    await event.answer_callback_query(text="❌ 全局配置需要管理员权限")
+                    return
+                sub_id = int(parts[2])
+                if not KEYBOARD_SESSIONS.get(session_id):
+                    await event.answer_callback_query(text="❌ Session expired")
+                    return
+                await self._show_global_config_keyboard(
+                    event,
+                    sub_id,
+                    session_id=session_id,
+                    return_to_personal=True,
+                )
+                return
+
+            # Handle rssupdate_personal_panel callback (switch back to personal)
+            if action in ("rups", "rssupdate_personal_panel") and len(parts) >= 3:
                 session_id = parts[1]
                 sub_id = int(parts[2])
-                await self._show_global_config_keyboard(event, sub_id)
+                await self._refresh_config_keyboard_mode_b(event, session_id, sub_id)
+                return
+
+            # Handle rssupdate_prompt callback (show edit command for text/numeric)
+            if action in ("rup", "rssupdate_prompt") and len(parts) >= 5:
+                session_id = parts[1]
+                sub_id = int(parts[2])
+                scope = parts[3]
+                config_key = parts[4]
+                await self._show_config_prompt(
+                    event, session_id, sub_id, scope, config_key
+                )
+                return
+
+            # Handle rssupdate_global_toggle callback (Mode B global toggle)
+            if action in ("rgt", "rssupdate_global_toggle") and len(parts) >= 4:
+                session_id = parts[1]
+                if not self._is_admin(event, session_id):
+                    await event.answer_callback_query(text="❌ 全局配置需要管理员权限")
+                    return
+                sub_id = int(parts[2])
+                config_key = parts[3]
+
+                if config_key not in ("ai_summary_enabled", "enable_proxy", "stop"):
+                    await event.answer_callback_query(text="❌ 无效配置项")
+                    return
+
+                subscription = await self.db.get_subscription(sub_id)
+                if not subscription:
+                    await event.answer_callback_query(text="❌ Subscription not found")
+                    return
+
+                current_value = getattr(subscription, config_key, False)
+                setattr(subscription, config_key, not current_value)
+                await self.db.update_subscription(subscription)
+                await self.scheduler.schedule_subscription_fetch(subscription)
+
+                new_value = getattr(subscription, config_key, False)
+                status_text = "已开启" if new_value else "已关闭"
+                await event.answer_callback_query(text=f"✅ {config_key} {status_text}")
+                session = KEYBOARD_SESSIONS.get(session_id)
+                await self._show_global_config_keyboard(
+                    event,
+                    sub_id,
+                    session_id=session_id if session_id != "0" else None,
+                    return_to_personal=bool(
+                        session and session.get("type") != "globalconfig"
+                    ),
+                )
                 return
 
             # Handle globaltoggle callback (toggle global config)
@@ -1692,11 +1920,20 @@ class Main(star.Star):
 
             # Handle globallist callback (back to global list)
             if action == "globallist":
-                await self._show_global_list_keyboard(event)
+                session_id = parts[1] if len(parts) >= 2 else None
+                if session_id and session_id != "0":
+                    if not self._is_admin(event, session_id):
+                        await event.answer_callback_query(
+                            text="❌ 全局配置需要管理员权限"
+                        )
+                        return
+                    await self._refresh_global_list_keyboard(event, session_id)
+                else:
+                    await self._show_global_list_keyboard(event)
                 return
 
             # Handle rssupdate_toggle callback (Mode B toggle)
-            if action == "rssupdate_toggle" and len(parts) >= 4:
+            if action in ("rut", "rssupdate_toggle") and len(parts) >= 4:
                 session_id = parts[1]
                 sub_id = int(parts[2])
                 config_key = parts[3]
@@ -1722,9 +1959,8 @@ class Main(star.Star):
                     "only_has_pic",
                     "enable_spoiler",
                     "stop",
-                    "black_keyword",
                 ]
-                global_config_keys = ["ai_summary_enabled", "enable_proxy"]
+                global_config_keys = ["ai_summary_enabled", "enable_proxy", "stop"]
 
                 if config_key in personal_config_keys:
                     if subscriber.personal_config is None:
@@ -1737,8 +1973,13 @@ class Main(star.Star):
                     await event.answer_callback_query(
                         text=f"✅ {config_key} {status_text}"
                     )
+                elif config_key in ("black_keyword", "white_keyword"):
+                    await self._show_config_prompt(
+                        event, session_id, sub_id, "personal", config_key
+                    )
+                    return
                 elif config_key in global_config_keys:
-                    if event.role not in ("admin", "superuser"):
+                    if not self._is_admin(event, session_id):
                         await event.answer_callback_query(
                             text="❌ 全局配置需要管理员权限"
                         )
@@ -1760,17 +2001,17 @@ class Main(star.Star):
                 return
 
             # Handle rssupdate_back callback (return to list)
-            if action == "rssupdate_back" and len(parts) >= 2:
+            if action in ("rub", "rssupdate_back") and len(parts) >= 2:
                 session_id = parts[1]
                 await self._refresh_rssupdate_keyboard(event, session_id)
                 return
 
             # Handle rssupdate_edit callback (edit numeric configs)
             if action == "rssupdate_edit" and len(parts) >= 4:
-                if event.role not in ("admin", "superuser"):
+                session_id = parts[1]
+                if not self._is_admin(event, session_id):
                     await event.answer_callback_query(text="❌ 全局配置需要管理员权限")
                     return
-                session_id = parts[1]
                 sub_id = int(parts[2])
                 config_key = parts[3]
 
@@ -1808,7 +2049,7 @@ class Main(star.Star):
                     f"请使用命令设置新值:\n"
                     f"`/rssupdate {sub_id} {config_key} <新数值>`"
                 )
-                event.set_result(result)
+                await self._send_or_set_result(event, result)
                 return
 
         except Exception as e:
@@ -1823,7 +2064,7 @@ class Main(star.Star):
         if not session:
             result = MessageEventResult()
             result.message("❌ Session expired")
-            event.set_result(result)
+            await self._send_or_set_result(event, result)
             return
 
         umo = session["umo"]
@@ -1841,7 +2082,7 @@ class Main(star.Star):
         if not user_subs:
             result = MessageEventResult()
             result.message("📭 You have no more subscriptions.")
-            event.set_result(result)
+            await self._send_or_set_result(event, result)
             return
 
         # Build keyboard buttons
@@ -1859,4 +2100,4 @@ class Main(star.Star):
         result = MessageEventResult()
         result.message("🗑️ Select a subscription to unsubscribe:")
         result.inline_keyboard(buttons)
-        event.set_result(result)
+        await self._send_or_set_result(event, result)

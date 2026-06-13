@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from astrbot_plugin_airss.commands import GroupCommands
-from astrbot_plugin_airss.main import Main
+from astrbot_plugin_airss.main import KEYBOARD_SESSIONS, Main
 from astrbot_plugin_airss.models import (
     RSSArticle,
     RSSGroup,
@@ -77,7 +77,96 @@ def test_command_parsing_preserves_argument_text():
 def test_update_config_number_scope_distinguishes_global_black_keyword():
     assert Main._resolve_update_config_key("⑥") == ("black_keyword", "personal")
     assert Main._resolve_update_config_key("⑫") == ("black_keyword", "global")
+    assert Main._resolve_update_config_key("⑬") == ("white_keyword", "personal")
     assert Main._resolve_update_config_key("black_keyword") == ("black_keyword", None)
+
+
+def test_keyboard_callback_data_stays_within_telegram_limit():
+    main = Main.__new__(Main)
+    subscription = RSSSubscription(
+        id=12345,
+        interval=10,
+        max_image_number=3,
+        source_group_id=2,
+    )
+
+    personal_buttons = main._build_rssupdate_config_buttons(
+        "abcdef12",
+        12345,
+        subscription,
+        {"only_title": True},
+        is_admin=True,
+    )
+    global_buttons = main._build_global_config_buttons(
+        12345,
+        subscription,
+        session_id="abcdef12",
+        return_to_personal=True,
+    )
+    callback_data = [
+        button["callback_data"]
+        for row in personal_buttons + global_buttons
+        for button in row
+    ]
+
+    assert all(len(data.encode("utf-8")) <= 64 for data in callback_data)
+
+
+def test_callback_admin_permission_can_fall_back_to_session_creator():
+    main = Main.__new__(Main)
+    event = MagicMock()
+    event.role = "member"
+    event.get_sender_id.return_value = "42"
+    KEYBOARD_SESSIONS["adminsess"] = {
+        "is_admin": True,
+        "user_id": "42",
+    }
+
+    try:
+        assert main._is_admin(event, "adminsess")
+    finally:
+        KEYBOARD_SESSIONS.pop("adminsess", None)
+
+
+def test_filter_articles_for_subscriber_applies_personal_white_keyword():
+    scheduler = RSSScheduler(MagicMock(), MagicMock(), MagicMock(), {})
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"white_keyword": "keep"},
+    )
+    hidden = _make_article(1, 1)
+    shown = _make_article(2, 1)
+    shown.content = "please keep this"
+
+    articles, skipped_article_ids = scheduler._filter_articles_for_subscriber(
+        [hidden, shown], subscriber, subscription
+    )
+
+    assert [article.id for article in articles] == [2]
+    assert skipped_article_ids == [1]
+
+
+def test_filter_articles_for_subscriber_prefers_black_keyword_over_white_keyword():
+    scheduler = RSSScheduler(MagicMock(), MagicMock(), MagicMock(), {})
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"black_keyword": "block", "white_keyword": "keep"},
+    )
+    conflicted = _make_article(1, 1)
+    conflicted.title = "keep but block"
+
+    articles, skipped_article_ids = scheduler._filter_articles_for_subscriber(
+        [conflicted], subscriber, subscription
+    )
+
+    assert articles == []
+    assert skipped_article_ids == [1]
 
 
 @pytest.mark.asyncio
@@ -157,6 +246,34 @@ async def test_collect_digest_targets_applies_subscriber_filters():
     assert set(targets) == {"3"}
     assert [article.id for article in targets["3"]["articles"]] == [3]
     db.mark_articles_sent_to_subscriber.assert_awaited_once_with(11, [1, 2])
+
+
+@pytest.mark.asyncio
+async def test_collect_digest_targets_applies_white_keyword_filter():
+    context = MagicMock()
+    db = MagicMock()
+    scheduler = RSSScheduler(context, db, MagicMock(), {})
+
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"white_keyword": "allowed"},
+    )
+    skipped = _make_article(1, 1)
+    visible = _make_article(2, 1)
+    visible.title = "allowed update"
+
+    db.get_subscribers = AsyncMock(return_value=[subscriber])
+    db.get_unsent_articles_for_subscriber = AsyncMock(return_value=[skipped, visible])
+    db.mark_articles_sent_to_subscriber = AsyncMock()
+
+    targets = await scheduler._collect_digest_targets([subscription], recent_days=0)
+
+    assert set(targets) == {"2"}
+    assert [article.id for article in targets["2"]["articles"]] == [2]
+    db.mark_articles_sent_to_subscriber.assert_awaited_once_with(11, [1])
 
 
 def test_normalize_digest_schedule_supports_legacy_time_and_cron():
