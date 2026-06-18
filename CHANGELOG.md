@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.8] - 2026-06-18
+
+### Fixed
+- Personal `stop` recovery now marks the subscriber's current backlog as sent
+  - Prevents a paused subscriber from receiving every article accumulated during the pause after resuming
+  - Other subscribers on the same feed keep their own unread state unchanged
+
 ## [1.6.7] - 2026-06-13
 
 ### Added

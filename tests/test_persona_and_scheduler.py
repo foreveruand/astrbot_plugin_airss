@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from astrbot_plugin_airss.commands import GroupCommands
+from astrbot_plugin_airss.database import Database
 from astrbot_plugin_airss.main import KEYBOARD_SESSIONS, Main
 from astrbot_plugin_airss.models import (
     RSSArticle,
@@ -274,6 +275,48 @@ async def test_collect_digest_targets_applies_white_keyword_filter():
     assert set(targets) == {"2"}
     assert [article.id for article in targets["2"]["articles"]] == [2]
     db.mark_articles_sent_to_subscriber.assert_awaited_once_with(11, [1])
+
+
+@pytest.mark.asyncio
+async def test_resuming_personal_stop_marks_backlog_sent_for_that_subscriber(
+    tmp_path,
+):
+    db = Database(tmp_path / "rss.db")
+    await db.init_db()
+    try:
+        subscription_id = await db.add_subscription(
+            RSSSubscription(name="feed", url="https://example.com/feed.xml")
+        )
+        paused = Subscriber(subscription_id=subscription_id, umo="u1")
+        active = Subscriber(subscription_id=subscription_id, umo="u2")
+        paused.id = await db.add_subscriber(paused)
+        active.id = await db.add_subscriber(active)
+
+        assert paused.id is not None
+        assert active.id is not None
+
+        paused.personal_config = {"stop": True}
+        await db.update_subscriber(paused)
+
+        await db.add_article(_make_article(1, subscription_id))
+        await db.add_article(_make_article(2, subscription_id))
+
+        paused.personal_config = {"stop": False}
+        await db.update_subscriber(paused)
+
+        paused_unsent = await db.get_unsent_articles_for_subscriber(
+            subscription_id,
+            paused.id,
+        )
+        active_unsent = await db.get_unsent_articles_for_subscriber(
+            subscription_id,
+            active.id,
+        )
+
+        assert paused_unsent == []
+        assert {article.title for article in active_unsent} == {"title-1", "title-2"}
+    finally:
+        await db.close()
 
 
 def test_normalize_digest_schedule_supports_legacy_time_and_cron():

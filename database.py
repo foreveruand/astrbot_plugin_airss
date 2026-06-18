@@ -729,10 +729,35 @@ class Database:
         async with self._acquire() as conn:
             import json
 
+            cursor = await conn.execute(
+                "SELECT personal_config FROM subscribers WHERE id = ?",
+                (subscriber.id,),
+            )
+            row = await cursor.fetchone()
+            old_config_data = (
+                json.loads(row["personal_config"])
+                if row and row["personal_config"] is not None
+                else {}
+            )
+            old_config = old_config_data if isinstance(old_config_data, dict) else {}
+            new_config = subscriber.personal_config or {}
+
             await conn.execute(
                 "UPDATE subscribers SET personal_config = ? WHERE id = ?",
                 (json.dumps(subscriber.personal_config), subscriber.id),
             )
+            if (
+                subscriber.id is not None
+                and old_config.get("stop", False)
+                and not new_config.get("stop", False)
+            ):
+                await conn.execute(
+                    """
+                    INSERT OR IGNORE INTO article_sent (article_id, subscriber_id)
+                    SELECT id, ? FROM articles WHERE subscription_id = ?
+                    """,
+                    (subscriber.id, subscriber.subscription_id),
+                )
             await conn.commit()
 
     async def delete_subscriber(self, subscription_id: int, umo: str) -> None:
