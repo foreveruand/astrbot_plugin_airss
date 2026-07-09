@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.9] - 2026-07-09
+
+### Changed
+- Telegram `/rssupdate` text and numeric config buttons now wait for the next message as the new value
+  - Deletes the user input message when Telegram permits it
+  - Refreshes the original inline config menu in place after success or cancellation
+
 ## [1.6.8] - 2026-06-18
 
 ### Fixed

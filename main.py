@@ -11,7 +11,10 @@ from pathlib import Path
 
 from astrbot.api import AstrBotConfig, star
 from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
-from astrbot.core.platform.sources.telegram.tg_event import TelegramCallbackQueryEvent
+from astrbot.core.platform.sources.telegram.tg_event import (
+    TelegramCallbackQueryEvent,
+    TelegramPlatformEvent,
+)
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .commands import GroupCommands, RSSCommands, RSSSubCommands, RSSUtilCommands
@@ -137,6 +140,159 @@ class Main(star.Star):
         if isinstance(event, TelegramCallbackQueryEvent):
             await event.send(result)
             event.clear_result()
+
+    async def _delete_telegram_user_message(self, event: AstrMessageEvent) -> None:
+        """Delete the Telegram message that supplied a pending config value.
+
+        Args:
+            event: Telegram message event containing the user reply.
+        """
+        if not isinstance(event, TelegramPlatformEvent):
+            return
+        raw_message = getattr(event.message_obj, "raw_message", None)
+        telegram_message = getattr(raw_message, "message", None)
+        if not telegram_message:
+            return
+        try:
+            await event.client.delete_message(
+                chat_id=telegram_message.chat.id,
+                message_id=telegram_message.message_id,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to delete Telegram pending input message: {e}")
+
+    def _build_pending_callback_event(
+        self, event: AstrMessageEvent, pending_edit: dict
+    ) -> TelegramCallbackQueryEvent:
+        """Create a callback-like event to edit the original Telegram menu.
+
+        Args:
+            event: Telegram message event that completed the pending edit.
+            pending_edit: Pending edit state saved from the original callback.
+
+        Returns:
+            Callback query event targeting the original menu message.
+        """
+        return TelegramCallbackQueryEvent(
+            callback_query_id="",
+            data="",
+            from_user_id=event.get_sender_id(),
+            from_username=event.get_sender_name(),
+            message=pending_edit.get("message"),
+            inline_message_id=pending_edit.get("inline_message_id"),
+            platform_meta=event.platform_meta,
+            session_id=event.session_id,
+            client=event.client,
+        )
+
+    async def _refresh_pending_edit_menu(
+        self,
+        event: AstrMessageEvent,
+        session_id: str,
+        pending_edit: dict,
+        status_line: str | None = None,
+    ) -> None:
+        """Refresh the menu that started a pending Telegram config edit.
+
+        Args:
+            event: Telegram message event that completed or cancelled the edit.
+            session_id: Keyboard session ID.
+            pending_edit: Pending edit state saved from the original callback.
+            status_line: Optional status message to include above the panel.
+        """
+        callback_event = self._build_pending_callback_event(event, pending_edit)
+        sub_id = pending_edit["sub_id"]
+        if pending_edit["scope"] == "global":
+            session = KEYBOARD_SESSIONS.get(session_id)
+            await self._show_global_config_keyboard(
+                callback_event,
+                sub_id,
+                session_id=session_id if session_id != "0" else None,
+                return_to_personal=bool(
+                    session and session.get("type") != "globalconfig"
+                ),
+                status_line=status_line,
+            )
+        else:
+            await self._refresh_config_keyboard_mode_b(
+                callback_event, session_id, sub_id, status_line=status_line
+            )
+
+    @filter.event_message_type(filter.EventMessageType.ALL, priority=999999)
+    async def handle_pending_telegram_config_input(
+        self, event: AstrMessageEvent
+    ) -> None:
+        """Handle the next Telegram message for a pending config edit.
+
+        Args:
+            event: Incoming message event.
+        """
+        if event.get_platform_name() != "telegram":
+            return
+
+        session_id = None
+        session = None
+        for current_session_id, current_session in KEYBOARD_SESSIONS.items():
+            pending_edit = current_session.get("pending_edit")
+            if (
+                pending_edit
+                and current_session.get("user_id") == event.get_sender_id()
+                and current_session.get("umo") == event.unified_msg_origin
+            ):
+                session_id = current_session_id
+                session = current_session
+                break
+
+        if not session_id or not session:
+            return
+
+        pending_edit = session["pending_edit"]
+        new_value = event.message_str.strip()
+        if not new_value:
+            return
+
+        event.stop_event()
+        await self._delete_telegram_user_message(event)
+
+        cancel_words = {"cancel", "取消", "退出", "返回", "/cancel"}
+        if new_value.lower() in cancel_words:
+            session.pop("pending_edit", None)
+            await self._refresh_pending_edit_menu(
+                event, session_id, pending_edit, "已取消编辑。"
+            )
+            return
+
+        await self._handle_mode_d(
+            event,
+            str(pending_edit["sub_id"]),
+            pending_edit["config_key"],
+            new_value,
+            pending_edit["scope"],
+            session_id=session_id,
+        )
+        result = event.get_result()
+        status_line = None
+        if result:
+            status_line = result.get_plain_text(with_other_comps_mark=True).split(
+                "\n", 1
+            )[0]
+            event.clear_result()
+
+        if status_line and status_line.startswith("✅"):
+            session.pop("pending_edit", None)
+            await self._refresh_pending_edit_menu(
+                event, session_id, pending_edit, status_line
+            )
+        else:
+            callback_event = self._build_pending_callback_event(event, pending_edit)
+            await self._show_config_prompt(
+                callback_event,
+                session_id,
+                pending_edit["sub_id"],
+                pending_edit["scope"],
+                pending_edit["config_key"],
+                status_line=status_line,
+            )
 
     def _parse_args(self, message: str) -> list[str]:
         """Parse message into arguments."""
@@ -352,6 +508,7 @@ class Main(star.Star):
         config_key: str,
         config_value: str,
         forced_scope: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         """Handle Mode D: Direct config modification with full parameters.
 
@@ -360,6 +517,8 @@ class Main(star.Star):
             name_or_id: Subscription identifier (ID or name).
             config_key: Configuration key (name or number).
             config_value: New value for the configuration.
+            forced_scope: Optional scope forced by numbered config keys.
+            session_id: Optional keyboard session for Telegram callback permissions.
         """
         from .models import GLOBAL_CONFIGURABLE_FIELDS, PERSONAL_CONFIG_KEYS
 
@@ -376,7 +535,7 @@ class Main(star.Star):
         subscriber = await self.db.get_subscriber(sub_id, umo)
 
         # Check permissions
-        is_admin = self._is_admin(event)
+        is_admin = self._is_admin(event, session_id)
         key_is_personal = config_key in PERSONAL_CONFIG_KEYS
         key_is_global = config_key in GLOBAL_CONFIGURABLE_FIELDS
         is_personal = key_is_personal and forced_scope != "global"
@@ -467,7 +626,7 @@ class Main(star.Star):
             setattr(subscription, config_key, new_value)
             await self.db.update_subscription(subscription)
             # Refresh scheduler for relevant fields
-            if config_key in ("interval", "stop"):
+            if config_key in ("interval", "max_image_number", "enable_proxy", "stop"):
                 await self.scheduler.schedule_subscription_fetch(subscription)
 
         # Build result table
@@ -1079,7 +1238,11 @@ class Main(star.Star):
         return buttons
 
     async def _refresh_config_keyboard_mode_b(
-        self, event: TelegramCallbackQueryEvent, session_id: str, sub_id: int
+        self,
+        event: TelegramCallbackQueryEvent,
+        session_id: str,
+        sub_id: int,
+        status_line: str | None = None,
     ) -> None:
         """Refresh the config keyboard after toggle (Mode B)."""
         session = KEYBOARD_SESSIONS.get(session_id)
@@ -1111,7 +1274,9 @@ class Main(star.Star):
         )
 
         result = MessageEventResult()
+        status_text = f"{status_line}\n\n" if status_line else ""
         result.message(
+            f"{status_text}"
             f"⚙️ **{subscription.name}** - [{subscription.url}]({subscription.url})\n\n"
             f"📋 **个人配置**\n"
             f"{'管理员可点 🔧 全局 切换全局配置。' if is_admin else ''}"
@@ -1513,6 +1678,7 @@ class Main(star.Star):
         session_id = uuid.uuid4().hex[:8]
         KEYBOARD_SESSIONS[session_id] = {
             "type": "globalconfig",
+            "umo": event.unified_msg_origin,
             "user_id": event.get_sender_id(),
             "is_admin": self._is_admin(event),
         }
@@ -1580,6 +1746,7 @@ class Main(star.Star):
         sub_id: int,
         session_id: str | None = None,
         return_to_personal: bool = False,
+        status_line: str | None = None,
     ) -> None:
         """Show global config toggle keyboard for a subscription (admin only)."""
         await self.initialize()
@@ -1596,6 +1763,7 @@ class Main(star.Star):
             session_id = uuid.uuid4().hex[:8]
             KEYBOARD_SESSIONS[session_id] = {
                 "type": "globalconfig",
+                "umo": event.unified_msg_origin,
                 "user_id": event.get_sender_id(),
                 "is_admin": True,
             }
@@ -1617,9 +1785,11 @@ class Main(star.Star):
         )
 
         result = MessageEventResult()
+        status_text = f"{status_line}\n\n" if status_line else ""
         result.message(
+            f"{status_text}"
             f"🔧 **{subscription.name}** - [{subscription.url}]({subscription.url}) 全局配置\n\n"
-            f"开关项可直接切换，文本/数值项会显示设置命令。"
+            f"开关项可直接切换，文本/数值项可点按钮后发送新值。"
         )
         result.inline_keyboard(buttons)
 
@@ -1632,8 +1802,9 @@ class Main(star.Star):
         sub_id: int,
         scope: str,
         config_key: str,
+        status_line: str | None = None,
     ) -> None:
-        """Show the command needed to edit text or numeric config values."""
+        """Prompt for the next Telegram message to edit a config value."""
         subscription = await self.db.get_subscription(sub_id)
         if not subscription:
             await event.answer_callback_query(text="❌ 订阅未找到")
@@ -1678,25 +1849,44 @@ class Main(star.Star):
             "max_image_number": "最大图片数",
             "source_group_id": "所属分组ID",
         }
-        command_keys = {
-            ("personal", "black_keyword"): "⑥",
-            ("personal", "white_keyword"): "⑬",
-            ("global", "black_keyword"): "⑫",
-        }
-        command_key = command_keys.get((scope, config_key), config_key)
         current_display = self._format_config_value(current_value)
         numeric_keys = {"interval", "max_image_number", "source_group_id"}
-        value_hint = "<新数值>" if config_key in numeric_keys else "<新文本>"
+        value_hint = (
+            "请输入新的数值" if config_key in numeric_keys else "请输入新的文本"
+        )
 
-        await event.answer_callback_query(text="请按提示发送命令")
+        session = KEYBOARD_SESSIONS.get(session_id)
+        if not session:
+            await event.answer_callback_query(text="❌ Session expired")
+            return
+        session["pending_edit"] = {
+            "sub_id": sub_id,
+            "scope": scope,
+            "config_key": config_key,
+            "message": event.message,
+            "inline_message_id": event.inline_message_id,
+        }
+
+        await event.answer_callback_query(text="请直接发送新值")
         result = MessageEventResult()
+        status_text = f"{status_line}\n\n" if status_line else ""
         result.message(
+            f"{status_text}"
             f"📝 **编辑配置项**\n\n"
             f"订阅: {subscription.name}\n"
             f"配置: {config_names.get(config_key, config_key)}\n"
             f"当前值: {current_display}\n\n"
-            f"设置命令:\n"
-            f"`/rssupdate {sub_id} {command_key} {value_hint}`"
+            f"{value_hint}，发送 `取消` 可返回。"
+        )
+        result.inline_keyboard(
+            [
+                [
+                    {
+                        "text": "取消/返回",
+                        "callback_data": f"ruc:{session_id}",
+                    }
+                ]
+            ]
         )
         await self._send_or_set_result(event, result)
 
@@ -1849,6 +2039,37 @@ class Main(star.Star):
                 await self._show_config_prompt(
                     event, session_id, sub_id, scope, config_key
                 )
+                return
+
+            # Handle pending edit cancel/back callback
+            if action == "ruc" and len(parts) >= 2:
+                session_id = parts[1]
+                session = KEYBOARD_SESSIONS.get(session_id)
+                if not session:
+                    await event.answer_callback_query(text="❌ Session expired")
+                    return
+                pending_edit = session.pop("pending_edit", None)
+                if not pending_edit:
+                    await event.answer_callback_query(text="已返回")
+                    return
+                await event.answer_callback_query(text="已取消编辑")
+                if pending_edit["scope"] == "global":
+                    await self._show_global_config_keyboard(
+                        event,
+                        pending_edit["sub_id"],
+                        session_id=session_id if session_id != "0" else None,
+                        return_to_personal=bool(
+                            session and session.get("type") != "globalconfig"
+                        ),
+                        status_line="已取消编辑。",
+                    )
+                else:
+                    await self._refresh_config_keyboard_mode_b(
+                        event,
+                        session_id,
+                        pending_edit["sub_id"],
+                        status_line="已取消编辑。",
+                    )
                 return
 
             # Handle rssupdate_global_toggle callback (Mode B global toggle)
