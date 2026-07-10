@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.10] - 2026-07-10
+
+### Added
+- Per-subscriber `ai_filter_enabled` duplicate filtering for newly fetched articles
+  - Uses a single AstrBot LLM call to compare the article title with plugin-wide recent article titles
+  - Similar articles are marked as sent only for that subscriber
+  - AI errors or unparsable results fall back to normal sending
+- AI filter settings `ai_filter_provider` and `ai_filter_recent_minutes`
+  - The filter provider is independent from the AI digest provider
+
 ## [1.6.9] - 2026-07-09
 
 ### Changed

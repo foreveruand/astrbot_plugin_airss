@@ -47,6 +47,8 @@
 | `ai_digest_title_max_len` | 120 | 标题最大字符数 |
 | `ai_digest_content_max_len` | 2048 | 内容最大字符数 |
 | `ai_fallback_message` | "" | AI 摘要失败时的提示消息 |
+| `ai_filter_provider` | "" | AI 筛选过滤使用的 Provider ID，留空则使用订阅者会话默认 Provider |
+| `ai_filter_recent_minutes` | 30 | AI 筛选过滤比较最近多少分钟内的全插件文章标题 |
 
 ### RSS 抓取配置 (`fetch_config`)
 
@@ -161,7 +163,7 @@
 
 ### 配置项编号
 
-**个人配置 (①-⑥/⑬)**
+**个人配置 (①-⑥/⑬-⑭)**
 
 | 编号 | 参数 | 说明 |
 |------|------|------|
@@ -172,6 +174,7 @@
 | ⑤ | `stop` | 暂停订阅 |
 | ⑥ | `black_keyword` | 关键词黑名单（逗号分隔） |
 | ⑬ | `white_keyword` | 关键词白名单（逗号分隔） |
+| ⑭ | `ai_filter_enabled` | AI 筛选过滤，按全插件最近文章标题判断重复内容 |
 
 **全局配置 (⑦-⑫，管理员)**
 
@@ -243,17 +246,20 @@
 | `stop` | 暂停订阅 |
 | `black_keyword` | 关键词黑名单（逗号分隔） |
 | `white_keyword` | 关键词白名单（逗号分隔）；设置后只推送标题或正文命中的文章 |
+| `ai_filter_enabled` | AI 筛选过滤；开启后抓取到新文章时，会用单次 LLM 调用和最近 `ai_filter_recent_minutes` 分钟内的全插件文章标题做重复判断，判定相似则仅对该订阅者标记已读；判定出错则正常发送 |
 
 示例：
 ```
 /rssupdate 科技资讯 only_title true
 /rssupdate 科技资讯 black_keyword 广告,推广
 /rssupdate 科技资讯 white_keyword AI,安全
+/rssupdate 科技资讯 ai_filter_enabled true
 ```
 
 说明：
 - `black_keyword` 和 `white_keyword` 都匹配文章标题和正文，多个关键词用英文逗号分隔
 - 同时配置黑名单和白名单时，黑名单优先；同时命中黑白名单的文章会被过滤
+- `ai_filter_enabled` 使用 `ai_filter_provider` 单独配置的 Provider，不走 AI 摘要的 Agent 会话管理
 - `stop` 从 `true` 恢复为 `false` 时，会跳过当前积压的未发送文章，避免恢复后集中补发暂停期间内容
 
 ## Persona 系统

@@ -257,7 +257,7 @@ class RSSScheduler:
             for keyword in keywords
         )
 
-    def _filter_articles_for_subscriber(
+    async def _filter_articles_for_subscriber(
         self,
         articles: list[RSSArticle],
         subscriber: Subscriber,
@@ -271,6 +271,9 @@ class RSSScheduler:
         black_keyword = get_effective_text(subscriber, "black_keyword", subscription)
         white_keyword = get_effective_text(subscriber, "white_keyword", subscription)
         only_has_pic = get_effective_bool(subscriber, "only_has_pic", subscription)
+        ai_filter_enabled = get_effective_bool(
+            subscriber, "ai_filter_enabled", subscription
+        )
 
         for article in articles:
             should_skip = False
@@ -288,9 +291,95 @@ class RSSScheduler:
                     skipped_article_ids.append(article.id)
                 continue
 
+            if ai_filter_enabled and article.id is not None:
+                try:
+                    if await self._is_ai_duplicate_article(article, subscriber):
+                        skipped_article_ids.append(article.id)
+                        continue
+                except Exception as exc:
+                    logger.warning(
+                        "AI duplicate filter failed for article %s: %s",
+                        article.id,
+                        exc,
+                    )
+
             visible_articles.append(article)
 
         return visible_articles, skipped_article_ids
+
+    def _get_ai_filter_provider(self, subscriber: Subscriber) -> str | None:
+        """Resolve the provider ID for AI duplicate filtering."""
+        ai_config = self.config.get("ai_config", {})
+        provider_id = str(ai_config.get("ai_filter_provider", "") or "").strip()
+        if provider_id:
+            return provider_id
+
+        try:
+            provider = self.context.get_using_provider(umo=subscriber.umo)
+        except Exception as exc:
+            logger.warning("Failed to resolve default AI filter provider: %s", exc)
+            return None
+
+        if not provider:
+            return None
+        return str(provider.provider_config.get("id", "") or "") or None
+
+    @staticmethod
+    def _parse_ai_duplicate_result(text: str) -> bool | None:
+        """Parse a strict boolean-like model result."""
+        normalized = (text or "").strip().lower()
+        if normalized in ("true", "yes", "1", "相似", "重复"):
+            return True
+        if normalized in ("false", "no", "0", "不相似", "不重复"):
+            return False
+        first_token = normalized.split(maxsplit=1)[0] if normalized else ""
+        if first_token in ("true", "yes", "1"):
+            return True
+        if first_token in ("false", "no", "0"):
+            return False
+        return None
+
+    async def _is_ai_duplicate_article(
+        self, article: RSSArticle, subscriber: Subscriber
+    ) -> bool:
+        """Use a single LLM call to decide whether a title duplicates recent titles."""
+        title = (article.title or "").strip()
+        if not title:
+            return False
+
+        ai_config = self.config.get("ai_config", {})
+        recent_minutes = int(ai_config.get("ai_filter_recent_minutes", 30) or 30)
+        recent_titles = await self.db.get_recent_article_titles(
+            recent_minutes, exclude_article_id=article.id
+        )
+        recent_titles = [candidate for candidate in recent_titles if candidate != title]
+        if not recent_titles:
+            return False
+
+        provider_id = self._get_ai_filter_provider(subscriber)
+        if not provider_id:
+            return False
+
+        titles_text = "\n".join(
+            f"{index}. {candidate}" for index, candidate in enumerate(recent_titles, 1)
+        )
+        prompt = (
+            "判断当前 RSS 文章标题是否与候选标题列表中任意一条表达同一事件、同一新闻或高度重复主题。\n"
+            "只返回 true 或 false，不要解释。\n\n"
+            f"当前标题：{title}\n\n"
+            f"候选标题：\n{titles_text}"
+        )
+        response = await self.context.llm_generate(
+            chat_provider_id=provider_id,
+            prompt=prompt,
+            system_prompt="你是 RSS 新闻标题去重分类器。只输出 true 或 false。",
+        )
+        result = self._parse_ai_duplicate_result(
+            getattr(response, "completion_text", "")
+        )
+        if result is None:
+            raise ValueError("AI duplicate filter returned an unparsable result")
+        return result
 
     async def _send_webhook(
         self,
@@ -748,7 +837,7 @@ class RSSScheduler:
             if not articles:
                 continue
 
-            articles, skipped_article_ids = self._filter_articles_for_subscriber(
+            articles, skipped_article_ids = await self._filter_articles_for_subscriber(
                 articles, subscriber, subscription
             )
             if skipped_article_ids:
@@ -1014,10 +1103,11 @@ class RSSScheduler:
                     subscriber.id,
                     recent_days=recent_days,
                 )
-                filtered_articles, skipped_article_ids = (
-                    self._filter_articles_for_subscriber(
-                        unsent, subscriber, subscription
-                    )
+                (
+                    filtered_articles,
+                    skipped_article_ids,
+                ) = await self._filter_articles_for_subscriber(
+                    unsent, subscriber, subscription
                 )
                 if skipped_article_ids:
                     await self.db.mark_articles_sent_to_subscriber(

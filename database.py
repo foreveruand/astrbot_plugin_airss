@@ -493,6 +493,43 @@ class Database:
                 for row in rows
             ]
 
+    async def get_recent_article_titles(
+        self, recent_minutes: int, exclude_article_id: int | None = None
+    ) -> list[str]:
+        """Get plugin-wide article titles fetched within the recent window.
+
+        Args:
+            recent_minutes: Lookback window in minutes.
+            exclude_article_id: Optional article ID to omit from the result.
+
+        Returns:
+            Recent non-empty article titles, newest first.
+        """
+        if recent_minutes <= 0:
+            return []
+
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=recent_minutes)
+        async with self._acquire() as conn:
+            params: list[Any] = [cutoff.isoformat()]
+            exclude_clause = ""
+            if exclude_article_id is not None:
+                exclude_clause = "AND id != ?"
+                params.append(exclude_article_id)
+
+            cursor = await conn.execute(
+                f"""
+                SELECT title FROM articles
+                WHERE fetched_at >= ?
+                AND title IS NOT NULL
+                AND title != ''
+                {exclude_clause}
+                ORDER BY fetched_at DESC
+                """,
+                params,
+            )
+            rows = await cursor.fetchall()
+            return [str(row["title"]) for row in rows]
+
     async def mark_articles_sent(self, article_ids: list[int]) -> None:
         """Mark articles as sent."""
         if not article_ids:

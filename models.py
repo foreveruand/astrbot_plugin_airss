@@ -129,6 +129,7 @@ PERSONAL_CONFIG_KEYS = {
     "stop": False,  # Pause subscription for this subscriber
     "black_keyword": "",  # Keyword filter
     "white_keyword": "",  # Keyword allowlist filter
+    "ai_filter_enabled": False,  # AI duplicate-title filtering
 }
 
 # Config number to name mapping for interactive selection
@@ -147,6 +148,7 @@ CONFIG_NUMBER_MAP = {
     "⑪": "source_group_id",
     "⑫": "black_keyword",
     "⑬": "white_keyword",
+    "⑭": "ai_filter_enabled",
 }
 
 # Config name to number mapping (reverse of CONFIG_NUMBER_MAP)
@@ -158,6 +160,7 @@ CONFIG_NAME_MAP = {
     "stop": "⑤",
     "black_keyword": "⑥",  # Personal config takes precedence
     "white_keyword": "⑬",
+    "ai_filter_enabled": "⑭",
     "interval": "⑦",
     "max_image_number": "⑧",
     "ai_summary_enabled": "⑨",
@@ -182,10 +185,11 @@ CONFIG_DESCRIPTIONS = {
     "black_keyword_personal": "⑥ 关键词黑名单 - 当前: {value}",
     "black_keyword_global": "⑫ 关键词黑名单（全局）- 当前: {value}",
     "white_keyword": "⑬ 关键词白名单 - 当前: {value}",
+    "ai_filter_enabled": "⑭ AI筛选过滤 - 当前: {value}",
 }
 
 
-PERSONAL_CONFIG_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥", "⑬"]
+PERSONAL_CONFIG_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥", "⑬", "⑭"]
 GLOBAL_CONFIG_NUMBERS = ["⑦", "⑧", "⑨", "⑩", "⑪", "⑫"]
 
 

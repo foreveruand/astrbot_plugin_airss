@@ -1108,7 +1108,7 @@ class Main(star.Star):
         personal_config_layout = [
             [("only_title", "标题", "📄"), ("only_pic", "图片", "🖼️")],
             [("only_has_pic", "有图", "📸"), ("enable_spoiler", "剧透", "👁️")],
-            [("stop", "暂停", "⏸️")],
+            [("ai_filter_enabled", "AI过滤", "🤖"), ("stop", "暂停", "⏸️")],
         ]
 
         for row in personal_config_layout:
@@ -1488,6 +1488,7 @@ class Main(star.Star):
             ("stop", "暂停订阅"),
             ("black_keyword", "关键词黑名单"),
             ("white_keyword", "关键词白名单"),
+            ("ai_filter_enabled", "AI筛选过滤"),
         ]
 
         for idx, (key, desc) in enumerate(personal_configs):
@@ -2179,6 +2180,7 @@ class Main(star.Star):
                     "only_pic",
                     "only_has_pic",
                     "enable_spoiler",
+                    "ai_filter_enabled",
                     "stop",
                 ]
                 global_config_keys = ["ai_summary_enabled", "enable_proxy", "stop"]

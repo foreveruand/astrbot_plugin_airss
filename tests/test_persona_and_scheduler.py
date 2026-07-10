@@ -79,6 +79,7 @@ def test_update_config_number_scope_distinguishes_global_black_keyword():
     assert Main._resolve_update_config_key("⑥") == ("black_keyword", "personal")
     assert Main._resolve_update_config_key("⑫") == ("black_keyword", "global")
     assert Main._resolve_update_config_key("⑬") == ("white_keyword", "personal")
+    assert Main._resolve_update_config_key("⑭") == ("ai_filter_enabled", "personal")
     assert Main._resolve_update_config_key("black_keyword") == ("black_keyword", None)
 
 
@@ -129,7 +130,8 @@ def test_callback_admin_permission_can_fall_back_to_session_creator():
         KEYBOARD_SESSIONS.pop("adminsess", None)
 
 
-def test_filter_articles_for_subscriber_applies_personal_white_keyword():
+@pytest.mark.asyncio
+async def test_filter_articles_for_subscriber_applies_personal_white_keyword():
     scheduler = RSSScheduler(MagicMock(), MagicMock(), MagicMock(), {})
     subscription = RSSSubscription(id=1)
     subscriber = Subscriber(
@@ -142,7 +144,7 @@ def test_filter_articles_for_subscriber_applies_personal_white_keyword():
     shown = _make_article(2, 1)
     shown.content = "please keep this"
 
-    articles, skipped_article_ids = scheduler._filter_articles_for_subscriber(
+    articles, skipped_article_ids = await scheduler._filter_articles_for_subscriber(
         [hidden, shown], subscriber, subscription
     )
 
@@ -150,7 +152,8 @@ def test_filter_articles_for_subscriber_applies_personal_white_keyword():
     assert skipped_article_ids == [1]
 
 
-def test_filter_articles_for_subscriber_prefers_black_keyword_over_white_keyword():
+@pytest.mark.asyncio
+async def test_filter_articles_for_subscriber_prefers_black_keyword_over_white_keyword():
     scheduler = RSSScheduler(MagicMock(), MagicMock(), MagicMock(), {})
     subscription = RSSSubscription(id=1)
     subscriber = Subscriber(
@@ -162,12 +165,74 @@ def test_filter_articles_for_subscriber_prefers_black_keyword_over_white_keyword
     conflicted = _make_article(1, 1)
     conflicted.title = "keep but block"
 
-    articles, skipped_article_ids = scheduler._filter_articles_for_subscriber(
+    articles, skipped_article_ids = await scheduler._filter_articles_for_subscriber(
         [conflicted], subscriber, subscription
     )
 
     assert articles == []
     assert skipped_article_ids == [1]
+
+
+@pytest.mark.asyncio
+async def test_filter_articles_for_subscriber_marks_ai_duplicate_skipped():
+    context = MagicMock()
+    response = MagicMock()
+    response.completion_text = "true"
+    context.llm_generate = AsyncMock(return_value=response)
+    db = MagicMock()
+    db.get_recent_article_titles = AsyncMock(return_value=["same event elsewhere"])
+    scheduler = RSSScheduler(
+        context,
+        db,
+        MagicMock(),
+        {"ai_config": {"ai_filter_provider": "filter-provider"}},
+    )
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"ai_filter_enabled": True},
+    )
+    article = _make_article(1, 1)
+
+    articles, skipped_article_ids = await scheduler._filter_articles_for_subscriber(
+        [article], subscriber, subscription
+    )
+
+    assert articles == []
+    assert skipped_article_ids == [1]
+    db.get_recent_article_titles.assert_awaited_once_with(30, exclude_article_id=1)
+    context.llm_generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_filter_articles_for_subscriber_keeps_article_when_ai_filter_fails():
+    context = MagicMock()
+    context.llm_generate = AsyncMock(side_effect=RuntimeError("provider failed"))
+    db = MagicMock()
+    db.get_recent_article_titles = AsyncMock(return_value=["similar candidate"])
+    scheduler = RSSScheduler(
+        context,
+        db,
+        MagicMock(),
+        {"ai_config": {"ai_filter_provider": "filter-provider"}},
+    )
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"ai_filter_enabled": True},
+    )
+    article = _make_article(1, 1)
+
+    articles, skipped_article_ids = await scheduler._filter_articles_for_subscriber(
+        [article], subscriber, subscription
+    )
+
+    assert articles == [article]
+    assert skipped_article_ids == []
 
 
 @pytest.mark.asyncio
@@ -274,6 +339,40 @@ async def test_collect_digest_targets_applies_white_keyword_filter():
 
     assert set(targets) == {"2"}
     assert [article.id for article in targets["2"]["articles"]] == [2]
+    db.mark_articles_sent_to_subscriber.assert_awaited_once_with(11, [1])
+
+
+@pytest.mark.asyncio
+async def test_collect_digest_targets_marks_ai_duplicate_sent_for_subscriber():
+    context = MagicMock()
+    response = MagicMock()
+    response.completion_text = "true"
+    context.llm_generate = AsyncMock(return_value=response)
+    db = MagicMock()
+    scheduler = RSSScheduler(
+        context,
+        db,
+        MagicMock(),
+        {"ai_config": {"ai_filter_provider": "filter-provider"}},
+    )
+
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"ai_filter_enabled": True},
+    )
+    article = _make_article(1, 1)
+
+    db.get_subscribers = AsyncMock(return_value=[subscriber])
+    db.get_unsent_articles_for_subscriber = AsyncMock(return_value=[article])
+    db.get_recent_article_titles = AsyncMock(return_value=["same event elsewhere"])
+    db.mark_articles_sent_to_subscriber = AsyncMock()
+
+    targets = await scheduler._collect_digest_targets([subscription], recent_days=0)
+
+    assert targets == {}
     db.mark_articles_sent_to_subscriber.assert_awaited_once_with(11, [1])
 
 

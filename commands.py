@@ -34,6 +34,7 @@ PERSONAL_CONFIG_DESCRIPTIONS = {
     "stop": "暂停订阅",
     "black_keyword": "关键词黑名单，多个用逗号分隔",
     "white_keyword": "关键词白名单，多个用逗号分隔",
+    "ai_filter_enabled": "AI 筛选过滤，按最近文章标题判断重复内容",
 }
 # Global config descriptions for display
 GLOBAL_CONFIG_DESCRIPTIONS = {
@@ -56,6 +57,7 @@ PERSONAL_CONFIG_BOOL_FIELDS = [
     "only_has_pic",
     "enable_spoiler",
     "stop",
+    "ai_filter_enabled",
 ]
 GLOBAL_CONFIG_BOOL_FIELDS = [
     "ai_summary_enabled",
