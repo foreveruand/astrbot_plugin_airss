@@ -90,13 +90,13 @@
         "type": "string",
         "default": "",
         "_special": "select_provider",
-        "description": "AI 筛选过滤使用的 Provider ID",
-        "hint": "留空则使用订阅者会话默认 Provider；仅用于标题重复判断，不影响 AI 摘要 Provider"
+        "description": "AI 主题去重使用的 Provider ID",
+        "hint": "留空则使用首个触发批次的订阅者会话默认 Provider；仅用于主题重复判断，不影响 AI 摘要 Provider"
       },
       "ai_filter_recent_minutes": {
         "type": "int",
         "default": 30,
-        "description": "AI 筛选过滤比较最近多少分钟内的全插件文章标题",
+        "description": "AI 主题去重比较最近多少分钟内的全插件文章标题",
         "min": 1,
         "max": 1440
       }

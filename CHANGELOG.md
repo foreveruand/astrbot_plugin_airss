@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.12] - 2026-07-10
+
+### Fixed
+- Removed the AI topic-filter request timeout introduced in 1.6.11 so remote model responses are not cancelled after 10 seconds
+- AI topic-filter failures now include the exception type in logs
+- AI topic-filter failures are persisted as not duplicate and are not retried for the same article
+
+## [1.6.11] - 2026-07-10
+
+### Changed
+- AI topic duplicate filtering now batches pending articles within each RSS source and persists the result per article
+  - Multiple subscribers with `ai_filter_enabled` no longer repeat AI calls for the same article
+  - Subscriber blacklists, whitelists, and image-only filtering run before an article enters an AI batch
+  - Duplicate results apply only to subscribers that enabled AI filtering; other subscribers still receive the article
+  - Previously marked duplicate articles are excluded from later AI candidate lists
+  - Existing databases are migrated by adding nullable AI filter result and check-time columns
+
 ## [1.6.10] - 2026-07-10
 
 ### Added

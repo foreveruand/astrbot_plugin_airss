@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import sqlite3
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from astrbot_plugin_airss.commands import GroupCommands
 from astrbot_plugin_airss.database import Database
 from astrbot_plugin_airss.main import KEYBOARD_SESSIONS, Main
@@ -177,10 +177,14 @@ async def test_filter_articles_for_subscriber_prefers_black_keyword_over_white_k
 async def test_filter_articles_for_subscriber_marks_ai_duplicate_skipped():
     context = MagicMock()
     response = MagicMock()
-    response.completion_text = "true"
+    response.completion_text = '[{"id": 1, "duplicate": true}]'
     context.llm_generate = AsyncMock(return_value=response)
     db = MagicMock()
-    db.get_recent_article_titles = AsyncMock(return_value=["same event elsewhere"])
+    db.get_article_ai_filter_results = AsyncMock(return_value={})
+    db.get_recent_ai_filter_candidates = AsyncMock(
+        return_value=[(99, "same event elsewhere")]
+    )
+    db.set_article_ai_filter_results = AsyncMock()
     scheduler = RSSScheduler(
         context,
         db,
@@ -202,7 +206,10 @@ async def test_filter_articles_for_subscriber_marks_ai_duplicate_skipped():
 
     assert articles == []
     assert skipped_article_ids == [1]
-    db.get_recent_article_titles.assert_awaited_once_with(30, exclude_article_id=1)
+    db.get_recent_ai_filter_candidates.assert_awaited_once_with(
+        30, exclude_article_ids=[1]
+    )
+    db.set_article_ai_filter_results.assert_awaited_once_with({1: True})
     context.llm_generate.assert_awaited_once()
 
 
@@ -211,7 +218,11 @@ async def test_filter_articles_for_subscriber_keeps_article_when_ai_filter_fails
     context = MagicMock()
     context.llm_generate = AsyncMock(side_effect=RuntimeError("provider failed"))
     db = MagicMock()
-    db.get_recent_article_titles = AsyncMock(return_value=["similar candidate"])
+    db.get_article_ai_filter_results = AsyncMock(return_value={})
+    db.get_recent_ai_filter_candidates = AsyncMock(
+        return_value=[(99, "similar candidate")]
+    )
+    db.set_article_ai_filter_results = AsyncMock()
     scheduler = RSSScheduler(
         context,
         db,
@@ -233,6 +244,144 @@ async def test_filter_articles_for_subscriber_keeps_article_when_ai_filter_fails
 
     assert articles == [article]
     assert skipped_article_ids == []
+    db.set_article_ai_filter_results.assert_awaited_once_with({1: False})
+
+
+@pytest.mark.asyncio
+async def test_filter_articles_for_subscriber_skips_ai_after_keyword_filtering():
+    context = MagicMock()
+    context.llm_generate = AsyncMock()
+    db = MagicMock()
+    scheduler = RSSScheduler(
+        context,
+        db,
+        MagicMock(),
+        {"ai_config": {"ai_filter_provider": "filter-provider"}},
+    )
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"black_keyword": "blocked", "ai_filter_enabled": True},
+    )
+    article = _make_article(1, 1)
+    article.title = "blocked article"
+
+    articles, skipped_article_ids = await scheduler._filter_articles_for_subscriber(
+        [article], subscriber, subscription
+    )
+
+    assert articles == []
+    assert skipped_article_ids == [1]
+    context.llm_generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_filter_articles_for_subscriber_reuses_article_ai_result():
+    context = MagicMock()
+    response = MagicMock()
+    response.completion_text = '[{"id": 1, "duplicate": true}]'
+    context.llm_generate = AsyncMock(return_value=response)
+    db = MagicMock()
+    db.get_article_ai_filter_results = AsyncMock(side_effect=[{}, {1: True}])
+    db.get_recent_ai_filter_candidates = AsyncMock(return_value=[(99, "same event")])
+    db.set_article_ai_filter_results = AsyncMock()
+    scheduler = RSSScheduler(
+        context,
+        db,
+        MagicMock(),
+        {"ai_config": {"ai_filter_provider": "filter-provider"}},
+    )
+    subscription = RSSSubscription(id=1)
+    subscribers = [
+        Subscriber(
+            id=11,
+            subscription_id=1,
+            umo="u1",
+            personal_config={"ai_filter_enabled": True},
+        ),
+        Subscriber(
+            id=12,
+            subscription_id=1,
+            umo="u2",
+            personal_config={"ai_filter_enabled": True},
+        ),
+    ]
+    article = _make_article(1, 1)
+
+    for subscriber in subscribers:
+        articles, skipped_article_ids = await scheduler._filter_articles_for_subscriber(
+            [article], subscriber, subscription
+        )
+        assert articles == []
+        assert skipped_article_ids == [1]
+
+    context.llm_generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_database_migrates_existing_articles_for_ai_filter(tmp_path):
+    db_path = tmp_path / "rss.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subscription_id INTEGER NOT NULL,
+            title TEXT,
+            content TEXT,
+            link TEXT,
+            guid TEXT,
+            author TEXT DEFAULT '',
+            published_at TEXT,
+            fetched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            is_sent INTEGER DEFAULT 0,
+            image_urls TEXT,
+            content_hash TEXT,
+            UNIQUE(subscription_id, content_hash)
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    db = Database(db_path)
+    await db.init_db()
+    try:
+        async with db._acquire() as connection:
+            cursor = await connection.execute("PRAGMA table_info(articles)")
+            columns = {row[1] for row in await cursor.fetchall()}
+        assert {"ai_filter_result", "ai_filter_checked_at"} <= columns
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_recent_ai_filter_candidates_exclude_marked_duplicates(tmp_path):
+    db = Database(tmp_path / "rss.db")
+    await db.init_db()
+    try:
+        duplicate = _make_article(0, 1)
+        duplicate.id = None
+        duplicate.title = "duplicate topic"
+        duplicate_id = await db.add_article(duplicate)
+        keep = _make_article(0, 1)
+        keep.id = None
+        keep.title = "independent topic"
+        keep.guid = "keep"
+        keep.link = "https://example.com/keep"
+        keep_id = await db.add_article(keep)
+        assert duplicate_id is not None
+        assert keep_id is not None
+
+        await db.set_article_ai_filter_results({duplicate_id: True})
+
+        candidates = await db.get_recent_ai_filter_candidates(30, [])
+
+        assert candidates == [(keep_id, "independent topic")]
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio
@@ -346,7 +495,7 @@ async def test_collect_digest_targets_applies_white_keyword_filter():
 async def test_collect_digest_targets_marks_ai_duplicate_sent_for_subscriber():
     context = MagicMock()
     response = MagicMock()
-    response.completion_text = "true"
+    response.completion_text = '[{"id": 1, "duplicate": true}]'
     context.llm_generate = AsyncMock(return_value=response)
     db = MagicMock()
     scheduler = RSSScheduler(
@@ -367,7 +516,11 @@ async def test_collect_digest_targets_marks_ai_duplicate_sent_for_subscriber():
 
     db.get_subscribers = AsyncMock(return_value=[subscriber])
     db.get_unsent_articles_for_subscriber = AsyncMock(return_value=[article])
-    db.get_recent_article_titles = AsyncMock(return_value=["same event elsewhere"])
+    db.get_article_ai_filter_results = AsyncMock(return_value={})
+    db.get_recent_ai_filter_candidates = AsyncMock(
+        return_value=[(99, "same event elsewhere")]
+    )
+    db.set_article_ai_filter_results = AsyncMock()
     db.mark_articles_sent_to_subscriber = AsyncMock()
 
     targets = await scheduler._collect_digest_targets([subscription], recent_days=0)

@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import html
+import json
 import logging
 import os
 import re
@@ -291,19 +292,27 @@ class RSSScheduler:
                     skipped_article_ids.append(article.id)
                 continue
 
-            if ai_filter_enabled and article.id is not None:
-                try:
-                    if await self._is_ai_duplicate_article(article, subscriber):
-                        skipped_article_ids.append(article.id)
-                        continue
-                except Exception as exc:
-                    logger.warning(
-                        "AI duplicate filter failed for article %s: %s",
-                        article.id,
-                        exc,
-                    )
-
             visible_articles.append(article)
+
+        if not ai_filter_enabled or not visible_articles:
+            return visible_articles, skipped_article_ids
+
+        duplicate_article_ids = await self._get_ai_duplicate_article_ids(
+            visible_articles, subscriber
+        )
+        if not duplicate_article_ids:
+            return visible_articles, skipped_article_ids
+
+        skipped_article_ids.extend(
+            article.id
+            for article in visible_articles
+            if article.id in duplicate_article_ids
+        )
+        visible_articles = [
+            article
+            for article in visible_articles
+            if article.id not in duplicate_article_ids
+        ]
 
         return visible_articles, skipped_article_ids
 
@@ -325,61 +334,150 @@ class RSSScheduler:
         return str(provider.provider_config.get("id", "") or "") or None
 
     @staticmethod
-    def _parse_ai_duplicate_result(text: str) -> bool | None:
-        """Parse a strict boolean-like model result."""
-        normalized = (text or "").strip().lower()
-        if normalized in ("true", "yes", "1", "相似", "重复"):
-            return True
-        if normalized in ("false", "no", "0", "不相似", "不重复"):
-            return False
-        first_token = normalized.split(maxsplit=1)[0] if normalized else ""
-        if first_token in ("true", "yes", "1"):
-            return True
-        if first_token in ("false", "no", "0"):
-            return False
-        return None
+    def _parse_ai_duplicate_results(
+        text: str, article_ids: set[int]
+    ) -> dict[int, bool] | None:
+        """Parse the batch AI topic-filter response.
 
-    async def _is_ai_duplicate_article(
-        self, article: RSSArticle, subscriber: Subscriber
-    ) -> bool:
-        """Use a single LLM call to decide whether a title duplicates recent titles."""
-        title = (article.title or "").strip()
-        if not title:
-            return False
+        Args:
+            text: Raw model completion text.
+            article_ids: IDs that were included in the model request.
+
+        Returns:
+            Mapping from article ID to duplicate result, or None for invalid output.
+        """
+        normalized = (text or "").strip()
+        if normalized.startswith("```"):
+            normalized = normalized.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        try:
+            payload = json.loads(normalized)
+        except json.JSONDecodeError:
+            return None
+
+        if isinstance(payload, dict):
+            payload = payload.get("results")
+        if not isinstance(payload, list):
+            return None
+
+        results: dict[int, bool] = {}
+        for item in payload:
+            if not isinstance(item, dict):
+                return None
+            article_id = item.get("id")
+            duplicate = item.get("duplicate")
+            if (
+                not isinstance(article_id, int)
+                or article_id not in article_ids
+                or not isinstance(duplicate, bool)
+            ):
+                return None
+            results[article_id] = duplicate
+        return results
+
+    async def _get_ai_duplicate_article_ids(
+        self, articles: list[RSSArticle], subscriber: Subscriber
+    ) -> set[int]:
+        """Get shared AI topic-filter results for one subscription's article batch.
+
+        Subscriber-specific keyword and image filters have already run before this
+        method. Results are stored on articles so later subscribers do not repeat
+        the model request.
+        """
+        articles_by_id = {
+            article.id: article
+            for article in articles
+            if article.id is not None and (article.title or "").strip()
+        }
+        if not articles_by_id:
+            return set()
+
+        cached_results = await self.db.get_article_ai_filter_results(
+            list(articles_by_id)
+        )
+        pending_articles = [
+            article
+            for article_id, article in articles_by_id.items()
+            if article_id not in cached_results
+        ]
+        if not pending_articles:
+            return {
+                article_id
+                for article_id, is_duplicate in cached_results.items()
+                if is_duplicate
+            }
 
         ai_config = self.config.get("ai_config", {})
         recent_minutes = int(ai_config.get("ai_filter_recent_minutes", 30) or 30)
-        recent_titles = await self.db.get_recent_article_titles(
-            recent_minutes, exclude_article_id=article.id
-        )
-        recent_titles = [candidate for candidate in recent_titles if candidate != title]
-        if not recent_titles:
-            return False
-
         provider_id = self._get_ai_filter_provider(subscriber)
         if not provider_id:
-            return False
+            return {
+                article_id
+                for article_id, is_duplicate in cached_results.items()
+                if is_duplicate
+            }
 
-        titles_text = "\n".join(
-            f"{index}. {candidate}" for index, candidate in enumerate(recent_titles, 1)
+        pending_article_ids = list(articles_by_id)
+        candidates = await self.db.get_recent_ai_filter_candidates(
+            recent_minutes,
+            exclude_article_ids=pending_article_ids,
         )
+        pending_ids = set(articles_by_id) - set(cached_results)
+        if not candidates:
+            await self.db.set_article_ai_filter_results(
+                dict.fromkeys(pending_ids, False)
+            )
+            return {
+                article_id
+                for article_id, is_duplicate in cached_results.items()
+                if is_duplicate
+            }
+
+        current_articles = [
+            {"id": article.id, "title": (article.title or "").strip()}
+            for article in pending_articles
+        ]
+        candidate_articles = [
+            {"id": article_id, "title": title} for article_id, title in candidates
+        ]
         prompt = (
-            "判断当前 RSS 文章标题是否与候选标题列表中任意一条表达同一事件、同一新闻或高度重复主题。\n"
-            "只返回 true 或 false，不要解释。\n\n"
-            f"当前标题：{title}\n\n"
-            f"候选标题：\n{titles_text}"
+            "判断当前 RSS 文章是否与已有文章标题表达同一事件、同一新闻或高度重复主题。"
+            "同一主体但不同事件，以及同一事件的实质性新进展，都不算重复。\n"
+            '只返回 JSON 数组，每项必须是 {"id": 整数, "duplicate": 布尔值}，不要解释。\n\n'
+            f"当前文章：{json.dumps(current_articles, ensure_ascii=False)}\n"
+            f"已有文章：{json.dumps(candidate_articles, ensure_ascii=False)}"
         )
-        response = await self.context.llm_generate(
-            chat_provider_id=provider_id,
-            prompt=prompt,
-            system_prompt="你是 RSS 新闻标题去重分类器。只输出 true 或 false。",
-        )
-        result = self._parse_ai_duplicate_result(
-            getattr(response, "completion_text", "")
-        )
-        if result is None:
-            raise ValueError("AI duplicate filter returned an unparsable result")
-        return result
+        try:
+            response = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt,
+                system_prompt="你是 RSS 新闻主题去重分类器。只输出指定 JSON。",
+            )
+            results = self._parse_ai_duplicate_results(
+                getattr(response, "completion_text", ""), pending_ids
+            )
+            if results is None:
+                raise ValueError("AI duplicate filter returned an invalid batch result")
+        except Exception as exc:
+            logger.warning(
+                "AI duplicate filter failed for articles %s (%s): %s",
+                pending_ids,
+                type(exc).__name__,
+                exc,
+            )
+            results = {}
+
+        # Missing or failed results fail open and are persisted so subscribers
+        # do not repeatedly invoke the same failing provider request.
+        results = {
+            article_id: results.get(article_id, False) for article_id in pending_ids
+        }
+        await self.db.set_article_ai_filter_results(results)
+        cached_results.update(results)
+        return {
+            article_id
+            for article_id, is_duplicate in cached_results.items()
+            if is_duplicate
+        }
 
     async def _send_webhook(
         self,

@@ -47,8 +47,8 @@
 | `ai_digest_title_max_len` | 120 | 标题最大字符数 |
 | `ai_digest_content_max_len` | 2048 | 内容最大字符数 |
 | `ai_fallback_message` | "" | AI 摘要失败时的提示消息 |
-| `ai_filter_provider` | "" | AI 筛选过滤使用的 Provider ID，留空则使用订阅者会话默认 Provider |
-| `ai_filter_recent_minutes` | 30 | AI 筛选过滤比较最近多少分钟内的全插件文章标题 |
+| `ai_filter_provider` | "" | AI 主题去重使用的 Provider ID，留空则使用首个符合条件订阅者的会话默认 Provider |
+| `ai_filter_recent_minutes` | 30 | AI 主题去重比较最近多少分钟内的全插件文章标题 |
 
 ### RSS 抓取配置 (`fetch_config`)
 
@@ -174,7 +174,7 @@
 | ⑤ | `stop` | 暂停订阅 |
 | ⑥ | `black_keyword` | 关键词黑名单（逗号分隔） |
 | ⑬ | `white_keyword` | 关键词白名单（逗号分隔） |
-| ⑭ | `ai_filter_enabled` | AI 筛选过滤，按全插件最近文章标题判断重复内容 |
+| ⑭ | `ai_filter_enabled` | AI 主题去重过滤，按全插件近期文章标题判断重复内容 |
 
 **全局配置 (⑦-⑫，管理员)**
 
@@ -246,7 +246,7 @@
 | `stop` | 暂停订阅 |
 | `black_keyword` | 关键词黑名单（逗号分隔） |
 | `white_keyword` | 关键词白名单（逗号分隔）；设置后只推送标题或正文命中的文章 |
-| `ai_filter_enabled` | AI 筛选过滤；开启后抓取到新文章时，会用单次 LLM 调用和最近 `ai_filter_recent_minutes` 分钟内的全插件文章标题做重复判断，判定相似则仅对该订阅者标记已读；判定出错则正常发送 |
+| `ai_filter_enabled` | AI 主题去重过滤；先执行黑白名单和图片过滤，再按订阅源批量判断当前文章与最近 `ai_filter_recent_minutes` 分钟内的全插件非重复文章标题。结果保存在文章上，同篇文章只调用一次 AI；判定重复只对开启该选项的订阅者标记已读，未开启者照常接收。判定出错则正常发送。 |
 
 示例：
 ```
@@ -259,7 +259,8 @@
 说明：
 - `black_keyword` 和 `white_keyword` 都匹配文章标题和正文，多个关键词用英文逗号分隔
 - 同时配置黑名单和白名单时，黑名单优先；同时命中黑白名单的文章会被过滤
-- `ai_filter_enabled` 使用 `ai_filter_provider` 单独配置的 Provider，不走 AI 摘要的 Agent 会话管理
+- `ai_filter_enabled` 使用 `ai_filter_provider` 单独配置的 Provider，不走 AI 摘要的 Agent 会话管理；未配置时使用首个触发该批次的订阅者会话 Provider
+- 已被 AI 标记为主题重复的文章不会作为后续 AI 判断的历史候选，减少无效候选和输入 token
 - `stop` 从 `true` 恢复为 `false` 时，会跳过当前积压的未发送文章，避免恢复后集中补发暂停期间内容
 
 ## Persona 系统

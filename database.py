@@ -67,6 +67,8 @@ class Database:
                 is_sent INTEGER DEFAULT 0,
                 image_urls TEXT,
                 content_hash TEXT,
+                ai_filter_result INTEGER DEFAULT NULL,
+                ai_filter_checked_at TEXT DEFAULT NULL,
                 UNIQUE(subscription_id, content_hash)
             );
 
@@ -221,6 +223,28 @@ class Database:
                 )
                 await conn.commit()
                 logger.info("Database migration completed: error_count column added")
+
+            for column, definition in (
+                ("ai_filter_result", "INTEGER DEFAULT NULL"),
+                ("ai_filter_checked_at", "TEXT DEFAULT NULL"),
+            ):
+                cursor = await conn.execute(
+                    "SELECT name FROM pragma_table_info('articles') WHERE name = ?",
+                    (column,),
+                )
+                if not await cursor.fetchone():
+                    logger.info(
+                        "Migrating database: adding %s column to articles table", column
+                    )
+                    await conn.execute(
+                        f"ALTER TABLE articles ADD COLUMN {column} {definition}"
+                    )
+                    await conn.commit()
+
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_articles_ai_filter ON articles(ai_filter_result)"
+            )
+            await conn.commit()
 
     # ==================== Subscription Operations ====================
 
@@ -489,46 +513,115 @@ class Database:
                     image_urls=row["image_urls"].split("|||")
                     if row["image_urls"]
                     else [],
+                    ai_filter_result=(
+                        bool(row["ai_filter_result"])
+                        if row["ai_filter_result"] is not None
+                        else None
+                    ),
+                    ai_filter_checked_at=(
+                        datetime.fromisoformat(row["ai_filter_checked_at"])
+                        if row["ai_filter_checked_at"]
+                        else None
+                    ),
                 )
                 for row in rows
             ]
 
-    async def get_recent_article_titles(
-        self, recent_minutes: int, exclude_article_id: int | None = None
-    ) -> list[str]:
-        """Get plugin-wide article titles fetched within the recent window.
+    async def get_article_ai_filter_results(
+        self, article_ids: list[int]
+    ) -> dict[int, bool]:
+        """Get persisted AI topic-filter results for articles.
+
+        Args:
+            article_ids: Article IDs to retrieve.
+
+        Returns:
+            Mapping of article ID to duplicate result for checked articles.
+        """
+        if not article_ids:
+            return {}
+
+        async with self._acquire() as conn:
+            placeholders = ",".join("?" * len(article_ids))
+            cursor = await conn.execute(
+                f"""
+                SELECT id, ai_filter_result FROM articles
+                WHERE id IN ({placeholders})
+                AND ai_filter_result IS NOT NULL
+                """,
+                article_ids,
+            )
+            rows = await cursor.fetchall()
+            return {int(row["id"]): bool(row["ai_filter_result"]) for row in rows}
+
+    async def set_article_ai_filter_results(self, results: dict[int, bool]) -> None:
+        """Persist AI topic-filter results for articles.
+
+        Args:
+            results: Mapping of article ID to duplicate result.
+        """
+        if not results:
+            return
+
+        checked_at = datetime.now(timezone.utc).isoformat()
+        async with self._acquire() as conn:
+            await conn.executemany(
+                """
+                UPDATE articles
+                SET ai_filter_result = ?, ai_filter_checked_at = ?
+                WHERE id = ?
+                """,
+                [
+                    (1 if is_duplicate else 0, checked_at, article_id)
+                    for article_id, is_duplicate in results.items()
+                ],
+            )
+            await conn.commit()
+
+    async def get_recent_ai_filter_candidates(
+        self,
+        recent_minutes: int,
+        exclude_article_ids: list[int],
+        limit: int = 50,
+    ) -> list[tuple[int, str]]:
+        """Get recent non-duplicate article titles for AI topic comparison.
 
         Args:
             recent_minutes: Lookback window in minutes.
-            exclude_article_id: Optional article ID to omit from the result.
+            exclude_article_ids: Article IDs to omit from the result.
+            limit: Maximum number of recent candidates to return.
 
         Returns:
-            Recent non-empty article titles, newest first.
+            Recent non-empty, non-duplicate article IDs and titles, newest first.
         """
-        if recent_minutes <= 0:
+        if recent_minutes <= 0 or limit <= 0:
             return []
 
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=recent_minutes)
         async with self._acquire() as conn:
             params: list[Any] = [cutoff.isoformat()]
             exclude_clause = ""
-            if exclude_article_id is not None:
-                exclude_clause = "AND id != ?"
-                params.append(exclude_article_id)
+            if exclude_article_ids:
+                placeholders = ",".join("?" * len(exclude_article_ids))
+                exclude_clause = f"AND id NOT IN ({placeholders})"
+                params.extend(exclude_article_ids)
+            params.append(limit)
 
             cursor = await conn.execute(
                 f"""
-                SELECT title FROM articles
+                SELECT id, title FROM articles
                 WHERE fetched_at >= ?
                 AND title IS NOT NULL
                 AND title != ''
+                AND (ai_filter_result IS NULL OR ai_filter_result = 0)
                 {exclude_clause}
                 ORDER BY fetched_at DESC
+                LIMIT ?
                 """,
                 params,
             )
             rows = await cursor.fetchall()
-            return [str(row["title"]) for row in rows]
+            return [(int(row["id"]), str(row["title"])) for row in rows]
 
     async def mark_articles_sent(self, article_ids: list[int]) -> None:
         """Mark articles as sent."""
@@ -594,6 +687,16 @@ class Database:
                     image_urls=row["image_urls"].split("|||")
                     if row["image_urls"]
                     else [],
+                    ai_filter_result=(
+                        bool(row["ai_filter_result"])
+                        if row["ai_filter_result"] is not None
+                        else None
+                    ),
+                    ai_filter_checked_at=(
+                        datetime.fromisoformat(row["ai_filter_checked_at"])
+                        if row["ai_filter_checked_at"]
+                        else None
+                    ),
                 )
                 for row in rows
             ]

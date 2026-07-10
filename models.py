@@ -70,6 +70,8 @@ class RSSArticle:
     fetched_at: datetime = field(default_factory=datetime.now)
     is_sent: bool = False
     image_urls: list[str] = field(default_factory=list)
+    ai_filter_result: bool | None = None
+    ai_filter_checked_at: datetime | None = None
 
 
 @dataclass
@@ -129,7 +131,7 @@ PERSONAL_CONFIG_KEYS = {
     "stop": False,  # Pause subscription for this subscriber
     "black_keyword": "",  # Keyword filter
     "white_keyword": "",  # Keyword allowlist filter
-    "ai_filter_enabled": False,  # AI duplicate-title filtering
+    "ai_filter_enabled": False,  # AI topic duplicate filtering
 }
 
 # Config number to name mapping for interactive selection
