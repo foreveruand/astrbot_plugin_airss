@@ -442,7 +442,9 @@ class RSSScheduler:
         prompt = (
             "判断当前 RSS 文章是否与已有文章标题表达同一事件、同一新闻或高度重复主题。"
             "同一主体但不同事件，以及同一事件的实质性新进展，都不算重复。\n"
-            '只返回 JSON 数组，每项必须是 {"id": 整数, "duplicate": 布尔值}，不要解释。\n\n'
+            "逐项判断每篇当前文章是否与任一已有文章重复。返回项的 id 必须是当前文章的 id，"
+            "绝不能使用已有文章的 id。每篇当前文章恰好返回一项。\n"
+            '只返回 JSON 数组，每项必须是 {"id": 当前文章 ID, "duplicate": 布尔值}，不要解释。\n\n'
             f"当前文章：{json.dumps(current_articles, ensure_ascii=False)}\n"
             f"已有文章：{json.dumps(candidate_articles, ensure_ascii=False)}"
         )

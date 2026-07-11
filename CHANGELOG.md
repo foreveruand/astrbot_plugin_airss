@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- Clarified that batched AI topic-filter responses must use current article IDs, preventing models from returning candidate article IDs that the filter rejects
+
 ## [1.6.12] - 2026-07-10
 
 ### Fixed
