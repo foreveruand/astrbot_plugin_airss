@@ -4,7 +4,7 @@ import sqlite3
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from astrbot_plugin_airss.commands import GroupCommands
+from astrbot_plugin_airss.commands import GroupCommands, RSSUtilCommands
 from astrbot_plugin_airss.database import Database
 from astrbot_plugin_airss.main import KEYBOARD_SESSIONS, Main
 from astrbot_plugin_airss.models import (
@@ -612,6 +612,27 @@ async def test_schedule_subscription_fetch_removes_job_when_stopped():
     )
 
     context.cron_manager.add_basic_job.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_util_trigger_reschedules_automatically_stopped_subscription():
+    db = MagicMock()
+    subscription = RSSSubscription(id=5, name="paused", stop=True, error_count=100)
+    db.get_subscription = AsyncMock(return_value=subscription)
+    db.update_subscription = AsyncMock()
+    scheduler = MagicMock()
+    scheduler.schedule_subscription_fetch = AsyncMock()
+    scheduler._fetch_subscription_handler = AsyncMock()
+    commands = RSSUtilCommands(MagicMock(), db, scheduler, {})
+    event = MagicMock()
+
+    await commands.util_trigger(event, "5")
+
+    assert subscription.stop is False
+    assert subscription.error_count == 0
+    db.update_subscription.assert_awaited_once_with(subscription)
+    scheduler.schedule_subscription_fetch.assert_awaited_once_with(subscription)
+    scheduler._fetch_subscription_handler.assert_awaited_once_with(5)
 
 
 @pytest.mark.asyncio

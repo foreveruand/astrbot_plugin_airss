@@ -682,6 +682,7 @@ class RSSCommands:
                 subscription.stop = False
                 subscription.error_count = 0
                 await self.db.update_subscription(subscription)
+                await self.scheduler.schedule_subscription_fetch(subscription)
             await self.scheduler._fetch_subscription_handler(subscription.id)
             event.set_result(
                 MessageEventResult().message(
@@ -1000,6 +1001,7 @@ class RSSUtilCommands:
                 subscription.stop = False
                 subscription.error_count = 0
                 await self.db.update_subscription(subscription)
+                await self.scheduler.schedule_subscription_fetch(subscription)
             await self.scheduler._fetch_subscription_handler(subscription.id)
             event.set_result(
                 MessageEventResult().message(

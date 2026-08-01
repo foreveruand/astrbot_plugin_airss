@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.13] - 2026-08-01
+
+### Fixed
+- `/rssutil trigger <name|id>` now recreates the periodic fetch job after recovering a subscription that was automatically stopped for repeated fetch failures
+
 ## [1.6.12] - 2026-07-10
 
 ### Fixed

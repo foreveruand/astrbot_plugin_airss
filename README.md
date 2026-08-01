@@ -227,7 +227,7 @@
 |------|------|------|
 | `/rssutil rsshub [path]` | 打印 RSSHub URL | `/rssutil rsshub /twitter/user/elonmusk` |
 | `/rssutil test <url>` | 测试 RSS 源可用性 | `/rssutil test https://example.com/feed.xml` |
-| `/rssutil trigger [name\|id]` | 手动触发抓取 | `/rssutil trigger 科技资讯` |
+| `/rssutil trigger [name\|id]` | 手动触发抓取；自动停止的指定订阅会恢复定时抓取 | `/rssutil trigger 科技资讯` |
 
 说明：
 - 配置了 `rsshub_config.rsshub_key` 后，`/rssutil rsshub [path]` 与 `/rssadd /path` 都会自动生成带 `code` 参数的完整 RSSHub URL。
@@ -315,7 +315,7 @@
 1. **Telegram Keyboard**: 支持 Telegram 内联键盘，在 `/rssdel` 和 `/rssupdate` 命令中可通过键盘按钮交互操作，详见上方说明
 2. **AI Provider**: 确保在配置中设置正确的 Provider ID，或在会话中配置默认 Provider
 3. **Persona**: 创建分组时会自动创建对应的 Persona，可在管理面板中修改
-4. **错误处理**: 订阅连续失败超过 `max_error_count` 次后会跳过抓取，直到手动触发或重置
+4. **错误处理**: 订阅连续失败超过 `max_error_count` 次后会停止定时抓取；使用 `/rssutil trigger <name|id>` 可恢复抓取和定时任务
 5. **文章清理规则**: `article_retention_days` 会优先按文章 `published_at` 判断是否过期；如果订阅源没有发布时间，则回退使用抓取时间 `fetched_at`
 6. **RSSHub 集成**: 配置 `rsshub_url` 后，可直接使用 `/rssadd /path/to/feed` 添加 RSSHub 路由，无需完整 URL
 
