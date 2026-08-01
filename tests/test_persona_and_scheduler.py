@@ -64,6 +64,14 @@ def _make_article(article_id: int, subscription_id: int) -> RSSArticle:
     )
 
 
+def test_parse_ai_duplicate_results_rejects_candidate_article_ids():
+    results = RSSScheduler._parse_ai_duplicate_results(
+        '[{"id": 99, "duplicate": false}]', {1}
+    )
+
+    assert results is None
+
+
 def test_command_parsing_preserves_argument_text():
     main = Main.__new__(Main)
 
@@ -211,6 +219,9 @@ async def test_filter_articles_for_subscriber_marks_ai_duplicate_skipped():
     )
     db.set_article_ai_filter_results.assert_awaited_once_with({1: True})
     context.llm_generate.assert_awaited_once()
+    prompt = context.llm_generate.await_args.kwargs["prompt"]
+    assert "id 必须是当前文章的 id" in prompt
+    assert "绝不能使用已有文章的 id" in prompt
 
 
 @pytest.mark.asyncio

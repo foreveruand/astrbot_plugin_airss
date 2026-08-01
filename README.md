@@ -48,7 +48,7 @@
 | `ai_digest_content_max_len` | 2048 | 内容最大字符数 |
 | `ai_fallback_message` | "" | AI 摘要失败时的提示消息 |
 | `ai_filter_provider` | "" | AI 主题去重使用的 Provider ID，留空则使用首个符合条件订阅者的会话默认 Provider |
-| `ai_filter_recent_minutes` | 30 | AI 主题去重比较最近多少分钟内的全插件文章标题 |
+| `ai_filter_recent_minutes` | 30 | AI 主题去重比较最近多少分钟内的全插件文章标题；模型按每篇当前文章返回是否与任一已有文章重复 |
 
 ### RSS 抓取配置 (`fetch_config`)
 
