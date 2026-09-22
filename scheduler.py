@@ -408,13 +408,16 @@ class RSSScheduler:
 
         ai_config = self.config.get("ai_config", {})
         recent_minutes = int(ai_config.get("ai_filter_recent_minutes", 30) or 30)
-        provider_id = self._get_ai_filter_provider(subscriber)
-        if not provider_id:
-            return {
-                article_id
-                for article_id, is_duplicate in cached_results.items()
-                if is_duplicate
-            }
+        model_type = str(ai_config.get("ai_filter_model_type", "") or "").strip()
+        provider_id: str | None = None
+        if model_type != "decision":
+            provider_id = self._get_ai_filter_provider(subscriber)
+            if not provider_id:
+                return {
+                    article_id
+                    for article_id, is_duplicate in cached_results.items()
+                    if is_duplicate
+                }
 
         pending_article_ids = list(articles_by_id)
         candidates = await self.db.get_recent_ai_filter_candidates(
@@ -439,26 +442,33 @@ class RSSScheduler:
         candidate_articles = [
             {"id": article_id, "title": title} for article_id, title in candidates
         ]
-        prompt = (
-            "判断当前 RSS 文章是否与已有文章标题表达同一事件、同一新闻或高度重复主题。"
-            "同一主体但不同事件，以及同一事件的实质性新进展，都不算重复。\n"
-            "逐项判断每篇当前文章是否与任一已有文章重复。返回项的 id 必须是当前文章的 id，"
-            "绝不能使用已有文章的 id。每篇当前文章恰好返回一项。\n"
-            '只返回 JSON 数组，每项必须是 {"id": 当前文章 ID, "duplicate": 布尔值}，不要解释。\n\n'
-            f"当前文章：{json.dumps(current_articles, ensure_ascii=False)}\n"
-            f"已有文章：{json.dumps(candidate_articles, ensure_ascii=False)}"
-        )
         try:
-            response = await self.context.llm_generate(
-                chat_provider_id=provider_id,
-                prompt=prompt,
-                system_prompt="你是 RSS 新闻主题去重分类器。只输出指定 JSON。",
-            )
-            results = self._parse_ai_duplicate_results(
-                getattr(response, "completion_text", ""), pending_ids
-            )
-            if results is None:
-                raise ValueError("AI duplicate filter returned an invalid batch result")
+            if model_type == "decision":
+                results = await self._get_decision_model_duplicate_results(
+                    current_articles, candidate_articles, ai_config
+                )
+            else:
+                prompt = (
+                    "判断当前 RSS 文章是否与已有文章标题表达同一事件、同一新闻或高度重复主题。"
+                    "同一主体但不同事件，以及同一事件的实质性新进展，都不算重复。\n"
+                    "逐项判断每篇当前文章是否与任一已有文章重复。返回项的 id 必须是当前文章的 id，"
+                    "绝不能使用已有文章的 id。每篇当前文章恰好返回一项。\n"
+                    '只返回 JSON 数组，每项必须是 {"id": 当前文章 ID, "duplicate": 布尔值}，不要解释。\n\n'
+                    f"当前文章：{json.dumps(current_articles, ensure_ascii=False)}\n"
+                    f"已有文章：{json.dumps(candidate_articles, ensure_ascii=False)}"
+                )
+                response = await self.context.llm_generate(
+                    chat_provider_id=provider_id,
+                    prompt=prompt,
+                    system_prompt="你是 RSS 新闻主题去重分类器。只输出指定 JSON。",
+                )
+                results = self._parse_ai_duplicate_results(
+                    getattr(response, "completion_text", ""), pending_ids
+                )
+                if results is None:
+                    raise ValueError(
+                        "AI duplicate filter returned an invalid batch result"
+                    )
         except Exception as exc:
             logger.warning(
                 "AI duplicate filter failed for articles %s (%s): %s",
@@ -480,6 +490,96 @@ class RSSScheduler:
             for article_id, is_duplicate in cached_results.items()
             if is_duplicate
         }
+
+    async def _get_decision_model_duplicate_results(
+        self,
+        current_articles: list[dict],
+        candidate_articles: list[dict],
+        ai_config: dict,
+    ) -> dict[int, bool]:
+        """Query the typed decision model (jev) for per-article duplicate answers.
+
+        Sends one batched Decisions API request with one noul question per
+        current article so a whole subscription batch is judged in a single
+        call.
+
+        Args:
+            current_articles: Pending articles as {"id", "title"} dicts.
+            candidate_articles: Recent articles as {"id", "title"} dicts.
+            ai_config: Plugin ai_config section.
+
+        Returns:
+            Mapping from current article ID to duplicate result.
+
+        Raises:
+            ValueError: If decision model settings are incomplete or the
+                response is missing valid per-article answers.
+        """
+        url = str(ai_config.get("ai_filter_decision_url", "") or "").strip()
+        api_key = str(ai_config.get("ai_filter_decision_key", "") or "").strip()
+        model = str(ai_config.get("ai_filter_decision_model", "") or "").strip()
+        threshold = float(ai_config.get("ai_filter_decision_threshold", 0.5) or 0.5)
+        if not url or not api_key or not model:
+            raise ValueError(
+                "decision model url/key/model must be configured when "
+                "ai_filter_model_type is 'decision'"
+            )
+
+        questions = {
+            f"q_{article['id']}": {
+                "type": "noul",
+                "instructions": (
+                    f"当前文章《{article['title']}》是否与任一已有文章表达同一事件、"
+                    "同一新闻或高度重复主题？同一主体但不同事件，以及同一事件的"
+                    "实质性新进展，都算不重复。"
+                ),
+                "criteria": {
+                    "true": "与任一已有文章重复",
+                    "false": "不与任何已有文章重复",
+                },
+            }
+            for article in current_articles
+        }
+        state = json.dumps(
+            {
+                "当前文章": current_articles,
+                "已有文章": candidate_articles,
+            },
+            ensure_ascii=False,
+        )
+        payload = {"model": model, "state": state, "questions": questions}
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as response:
+                if response.status != 200:
+                    raise ValueError(
+                        f"decision model API returned status {response.status}"
+                    )
+                data = await response.json()
+
+        answers = data.get("answers")
+        if not isinstance(answers, dict):
+            raise ValueError("decision model response is missing answers")
+
+        results: dict[int, bool] = {}
+        for article in current_articles:
+            answer = answers.get(f"q_{article['id']}")
+            noul = answer.get("noul") if isinstance(answer, dict) else None
+            if not isinstance(noul, (int, float)) or isinstance(noul, bool):
+                raise ValueError(
+                    "decision model response is missing valid per-article answers"
+                )
+            results[article["id"]] = float(noul) >= threshold
+        return results
 
     async def _send_webhook(
         self,

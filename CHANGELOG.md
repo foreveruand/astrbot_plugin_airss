@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.0] - 2026-09-22
+
+### Added
+- AI topic duplicate filtering can now use a typed decision model (jev) via the Decisions API
+  - New `ai_filter_model_type` option switches between AstrBot generative providers (`generative`, default) and the decision model (`decision`)
+  - Decision model settings are plugin config options: `ai_filter_decision_url`, `ai_filter_decision_key`, `ai_filter_decision_model`, and the `ai_filter_decision_threshold` noul probability cutoff
+  - One batched Decisions API call judges all pending articles with one noul question per article; results reuse the existing per-article persistence
+  - Missing decision model settings or request failures fall back to not-duplicate without calling the generative provider
+
 ## [1.6.13] - 2026-08-01
 
 ### Fixed

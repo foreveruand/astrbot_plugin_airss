@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 from astrbot_plugin_airss.commands import GroupCommands, RSSUtilCommands
 from astrbot_plugin_airss.database import Database
@@ -256,6 +257,187 @@ async def test_filter_articles_for_subscriber_keeps_article_when_ai_filter_fails
     assert articles == [article]
     assert skipped_article_ids == []
     db.set_article_ai_filter_results.assert_awaited_once_with({1: False})
+
+
+class _FakeDecisionResponse:
+    def __init__(self, payload, status=200):
+        self.status = status
+        self._payload = payload
+
+    async def json(self):
+        return self._payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+
+class _FakeDecisionSession:
+    def __init__(self, response):
+        self._response = response
+        self.post_kwargs: dict = {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    def post(self, url, **kwargs):
+        self.post_kwargs = {"url": url, **kwargs}
+        return self._response
+
+
+def _decision_model_config() -> dict:
+    return {
+        "ai_filter_model_type": "decision",
+        "ai_filter_decision_url": "https://example.com/api/alpha/decisions",
+        "ai_filter_decision_key": "sk-test",
+        "ai_filter_decision_model": "typesafe/jev-1.13",
+        "ai_filter_decision_threshold": 0.6,
+    }
+
+
+@pytest.mark.asyncio
+async def test_filter_articles_for_subscriber_uses_decision_model_for_duplicates():
+    context = MagicMock()
+    context.llm_generate = AsyncMock()
+    db = MagicMock()
+    db.get_article_ai_filter_results = AsyncMock(return_value={})
+    db.get_recent_ai_filter_candidates = AsyncMock(
+        return_value=[(99, "same event elsewhere")]
+    )
+    db.set_article_ai_filter_results = AsyncMock()
+    scheduler = RSSScheduler(
+        context,
+        db,
+        MagicMock(),
+        {"ai_config": _decision_model_config()},
+    )
+    scheduler._get_decision_model_duplicate_results = AsyncMock(return_value={1: True})
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"ai_filter_enabled": True},
+    )
+    article = _make_article(1, 1)
+
+    articles, skipped_article_ids = await scheduler._filter_articles_for_subscriber(
+        [article], subscriber, subscription
+    )
+
+    assert articles == []
+    assert skipped_article_ids == [1]
+    db.set_article_ai_filter_results.assert_awaited_once_with({1: True})
+    context.llm_generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_decision_model_duplicate_results_applies_threshold():
+    answers = {"q_1": {"noul": 0.9}, "q_2": {"noul": 0.3}}
+    fake_session = _FakeDecisionSession(_FakeDecisionResponse({"answers": answers}))
+    scheduler = RSSScheduler(MagicMock(), MagicMock(), MagicMock(), {})
+    current_articles = [
+        {"id": 1, "title": "new article"},
+        {"id": 2, "title": "other article"},
+    ]
+    candidate_articles = [{"id": 99, "title": "same event elsewhere"}]
+
+    with patch(
+        "astrbot_plugin_airss.scheduler.aiohttp.ClientSession",
+        return_value=fake_session,
+    ):
+        results = await scheduler._get_decision_model_duplicate_results(
+            current_articles, candidate_articles, _decision_model_config()
+        )
+
+    assert results == {1: True, 2: False}
+    assert fake_session.post_kwargs["url"] == "https://example.com/api/alpha/decisions"
+    assert fake_session.post_kwargs["headers"]["Authorization"] == "Bearer sk-test"
+    payload = fake_session.post_kwargs["json"]
+    assert payload["model"] == "typesafe/jev-1.13"
+    assert set(payload["questions"]) == {"q_1", "q_2"}
+    assert "same event elsewhere" in payload["state"]
+
+
+@pytest.mark.asyncio
+async def test_filter_articles_for_subscriber_fails_open_without_decision_config():
+    context = MagicMock()
+    context.llm_generate = AsyncMock()
+    db = MagicMock()
+    db.get_article_ai_filter_results = AsyncMock(return_value={})
+    db.get_recent_ai_filter_candidates = AsyncMock(
+        return_value=[(99, "similar candidate")]
+    )
+    db.set_article_ai_filter_results = AsyncMock()
+    scheduler = RSSScheduler(
+        context,
+        db,
+        MagicMock(),
+        {"ai_config": {"ai_filter_model_type": "decision"}},
+    )
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"ai_filter_enabled": True},
+    )
+    article = _make_article(1, 1)
+
+    articles, skipped_article_ids = await scheduler._filter_articles_for_subscriber(
+        [article], subscriber, subscription
+    )
+
+    assert articles == [article]
+    assert skipped_article_ids == []
+    db.set_article_ai_filter_results.assert_awaited_once_with({1: False})
+    context.llm_generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_filter_articles_for_subscriber_fails_open_when_decision_api_fails():
+    fake_session = _FakeDecisionSession(None)
+    fake_session.post = MagicMock(side_effect=aiohttp.ClientError("connection failed"))
+    context = MagicMock()
+    context.llm_generate = AsyncMock()
+    db = MagicMock()
+    db.get_article_ai_filter_results = AsyncMock(return_value={})
+    db.get_recent_ai_filter_candidates = AsyncMock(
+        return_value=[(99, "similar candidate")]
+    )
+    db.set_article_ai_filter_results = AsyncMock()
+    scheduler = RSSScheduler(
+        context,
+        db,
+        MagicMock(),
+        {"ai_config": _decision_model_config()},
+    )
+    subscription = RSSSubscription(id=1)
+    subscriber = Subscriber(
+        id=11,
+        subscription_id=1,
+        umo="u1",
+        personal_config={"ai_filter_enabled": True},
+    )
+    article = _make_article(1, 1)
+
+    with patch(
+        "astrbot_plugin_airss.scheduler.aiohttp.ClientSession",
+        return_value=fake_session,
+    ):
+        articles, skipped_article_ids = await scheduler._filter_articles_for_subscriber(
+            [article], subscriber, subscription
+        )
+
+    assert articles == [article]
+    assert skipped_article_ids == []
+    db.set_article_ai_filter_results.assert_awaited_once_with({1: False})
+    context.llm_generate.assert_not_awaited()
 
 
 @pytest.mark.asyncio

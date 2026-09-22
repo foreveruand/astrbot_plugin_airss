@@ -47,7 +47,12 @@
 | `ai_digest_title_max_len` | 120 | 标题最大字符数 |
 | `ai_digest_content_max_len` | 2048 | 内容最大字符数 |
 | `ai_fallback_message` | "" | AI 摘要失败时的提示消息 |
-| `ai_filter_provider` | "" | AI 主题去重使用的 Provider ID，留空则使用首个符合条件订阅者的会话默认 Provider |
+| `ai_filter_provider` | "" | AI 主题去重使用的 Provider ID，留空则使用首个符合条件订阅者的会话默认 Provider；仅模型类型为 generative 时生效 |
+| `ai_filter_model_type` | "generative" | AI 去重判断模型类型：`generative` 使用 AstrBot 生成式模型（`ai_filter_provider`）；`decision` 使用 jev 判断模型（Decisions API） |
+| `ai_filter_decision_url` | "https://openrouter.ai/api/alpha/decisions" | 判断模型 Decisions API 地址，仅 `decision` 类型需要填写 |
+| `ai_filter_decision_key` | "" | 判断模型 API Key，仅 `decision` 类型需要填写 |
+| `ai_filter_decision_model` | "typesafe/jev-1.13" | 判断模型名称，仅 `decision` 类型需要填写 |
+| `ai_filter_decision_threshold` | 0.5 | 判断模型返回的 noul 概率达到该阈值（0-1）即判定为重复，仅 `decision` 类型生效 |
 | `ai_filter_recent_minutes` | 30 | AI 主题去重比较最近多少分钟内的全插件文章标题；模型按每篇当前文章返回是否与任一已有文章重复 |
 
 ### RSS 抓取配置 (`fetch_config`)
@@ -260,6 +265,7 @@
 - `black_keyword` 和 `white_keyword` 都匹配文章标题和正文，多个关键词用英文逗号分隔
 - 同时配置黑名单和白名单时，黑名单优先；同时命中黑白名单的文章会被过滤
 - `ai_filter_enabled` 使用 `ai_filter_provider` 单独配置的 Provider，不走 AI 摘要的 Agent 会话管理；未配置时使用首个触发该批次的订阅者会话 Provider
+- `ai_filter_model_type` 为 `decision` 时改用 jev 判断模型：按批量文章一次请求 Decisions API，每篇当前文章对应一个 noul 问题，`noul >= ai_filter_decision_threshold` 判定为重复；此时 `ai_filter_provider` 不生效，需填写 `ai_filter_decision_url`、`ai_filter_decision_key`、`ai_filter_decision_model`，配置缺失或请求出错按不重复处理（正常发送）
 - 已被 AI 标记为主题重复的文章不会作为后续 AI 判断的历史候选，减少无效候选和输入 token
 - `stop` 从 `true` 恢复为 `false` 时，会跳过当前积压的未发送文章，避免恢复后集中补发暂停期间内容
 

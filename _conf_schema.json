@@ -93,6 +93,39 @@
         "description": "AI 主题去重使用的 Provider ID",
         "hint": "留空则使用首个触发批次的订阅者会话默认 Provider；仅用于主题重复判断，不影响 AI 摘要 Provider"
       },
+      "ai_filter_model_type": {
+        "type": "string",
+        "default": "generative",
+        "options": ["generative", "decision"],
+        "description": "AI 去重判断模型类型",
+        "hint": "generative = AstrBot 生成式模型（使用 ai_filter_provider）；decision = jev 判断模型（Decisions API），选择判断模型后需填写下方判断模型配置"
+      },
+      "ai_filter_decision_url": {
+        "type": "string",
+        "default": "https://openrouter.ai/api/alpha/decisions",
+        "description": "判断模型 Decisions API 地址（仅判断模型类型需要）",
+        "hint": "OpenRouter 默认地址，兼容同结构服务可自定义"
+      },
+      "ai_filter_decision_key": {
+        "type": "string",
+        "default": "",
+        "description": "判断模型 API Key（仅判断模型类型需要）",
+        "hint": "例如 OpenRouter API Key（sk-or-...），判断模型类型时必填"
+      },
+      "ai_filter_decision_model": {
+        "type": "string",
+        "default": "typesafe/jev-1.13",
+        "description": "判断模型名称（仅判断模型类型需要）",
+        "hint": "例如 typesafe/jev-1.13"
+      },
+      "ai_filter_decision_threshold": {
+        "type": "float",
+        "default": 0.5,
+        "description": "判断模型判定重复的 noul 概率阈值",
+        "hint": "取值 0-1，模型返回概率达到阈值即判定为重复，仅判断模型类型生效",
+        "min": 0,
+        "max": 1
+      },
       "ai_filter_recent_minutes": {
         "type": "int",
         "default": 30,
